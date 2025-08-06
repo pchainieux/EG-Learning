@@ -1,0 +1,6 @@
+viol_total: 0
+viol_frac_total: 0.0
+viol_exc: 0
+viol_frac_exc: 0.0
+viol_inh: 0
+viol_frac_inh: 0.0
