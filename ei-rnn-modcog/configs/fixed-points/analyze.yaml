@@ -1,0 +1,4 @@
+run: experiments/runs/ei_pI/eg/pI=0.35/seed=000
+contexts: [memory, anti]
+k_slow: 4
+m_overlap: 3
