@@ -1,9 +1,10 @@
 # =========================
-# Makefile (robust paths)
+# Makefile (robust & simple)
 # =========================
 SHELL := /bin/bash
+export PYTHONPATH := $(PWD)
 
-# ---- knobs (override: make all EXP=myexp PIs="0.2 0.5") ----
+# ---- config (override: make all EXP=myexp PIs="0.2 0.5") ----
 PY          ?= python
 RUN_ROOT    ?= experiments/runs
 EXP         ?= ei_pI
@@ -38,75 +39,34 @@ ROB_BATCH   ?= 128
 SUMMARY_CSV := $(RUN_ROOT)/$(EXP)/summary.csv
 FIGS_DIR    := $(RUN_ROOT)/$(EXP)/figs
 
+# Resolve scripts dir: supports 'fixed-points/' or 'fixed_points/'
+FP_DIR := $(shell if [ -d fixed-points ]; then echo fixed-points; elif [ -d fixed_points ]; then echo fixed_points; else echo fixed-points; fi)
+
 # ---- pretty banner ----
 define banner
 	@printf "\n\033[1;36m==> %s\033[0m\n" "$(1)"
 endef
 
-# ---- helper: run a script that lives under fixed_points/ (or fixed-points/) ----
-# Usage: $(call RUN_FP,train, --arg1 foo --arg2 bar)
-define RUN_FP
-if [ -d fixed_points ]; then \
-	PYTHONPATH=$$(pwd) $(PY) -m fixed_points.$(1) $(2); \
-elif [ -d fixed-points ]; then \
-	$(PY) fixed-points/$$(echo "$(1)" | tr . /).py $(2); \
-else \
-	echo "ERROR: Neither fixed_points/ nor fixed-points/ exists."; \
-	exit 1; \
-fi
-endef
-
-# ---- helper: loop over existing run dirs (robust to seed=0 vs seed=000) ----
-# Expands at execution time.
-define FOR_EACH_RUN
-for run in $$(find "$(RUN_ROOT)/$(EXP)" -type d -name 'seed=*' | sort); do \
-	echo "$(1) $$run"; \
-	$(2); \
-done
-endef
-
-.PHONY: all train fixedpoints analyze robustness aggregate plots ringplots clean list runs
-
-
-# =========================
-# Dependencied
-# =========================
-
-.PHONY: deps
-
-deps:
-	$(call banner,Checking Python dependencies)
-	@$(PY) - <<'PY'
-import importlib, subprocess, sys
-pkgs = [
-    "loguru",        # neurogym logging
-    "numpy", "scipy", "pandas",
-    "matplotlib", "scikit-learn"
-]
-missing = []
-for p in pkgs:
-    try:
-        importlib.import_module(p.replace("-", "_"))
-    except Exception:
-        missing.append(p)
-if missing:
-    print("Installing:", " ".join(missing))
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q"] + missing)
-else:
-    print("OK: all deps present.")
-PY
+.PHONY: all deps train fixedpoints analyze robustness aggregate plots ringplots list runs clean
 
 # =========================
 # Full pipeline
 # =========================
-all: train fixedpoints analyze robustness aggregate plots
+all: deps train fixedpoints analyze robustness aggregate plots
+
+# Minimal deps (avoid heredoc)
+deps:
+	$(call banner,Checking Python deps)
+	@$(PY) -c "import importlib, subprocess, sys; req=['loguru']; \
+missing=[r for r in req if importlib.util.find_spec(r) is None]; \
+subprocess.check_call([sys.executable,'-m','pip','install','-q']+missing) if missing else print('OK')"
 
 # =========================
-# Stage: training
+# Stage: training (writes seed=000)
 # =========================
 train:
-	$(call banner,TRAIN → writing under $(RUN_ROOT)/$(EXP))
-	@set -e; \
+	$(call banner,TRAIN → $(RUN_ROOT)/$(EXP))
+	@set -euo pipefail; \
 	for o in $(OPTIMS); do \
 	  for p in $(PIs); do \
 	    for s in $(SEEDS); do \
@@ -114,7 +74,7 @@ train:
 	      outdir="$(RUN_ROOT)/$(EXP)/$$o/pI=$$p/seed=$$seedp"; \
 	      mkdir -p "$$outdir"; \
 	      echo "[train] $$outdir"; \
-	      $(call RUN_FP,train, \
+	      $(PY) "$(FP_DIR)/train.py" \
 	        --optim $$o \
 	        --pI $$p \
 	        --seed $$s \
@@ -122,97 +82,107 @@ train:
 	        --hidden $(HIDDEN) \
 	        --epochs $(EPOCHS) \
 	        --steps $(STEPS) \
+	        --seq_len $(FP_SEQ_LEN) \
+	        --batch $(FP_BATCH) \
 	        --lr_eg $(LR_EG) \
 	        --lr_gd $(LR_GD) \
 	        --device $(DEVICE) \
-	        --outroot $(RUN_ROOT)/$(EXP) ); \
+	        --outdir "$$outdir"; \
 	    done; \
 	  done; \
 	done
+
+
+# Helper: iterate over existing runs (robust to seed formatting)
+define _for_each_run
+set -euo pipefail; \
+runs=$$(find "$(RUN_ROOT)/$(EXP)" -type d -name 'seed=*' | sort); \
+if [ -z "$$runs" ]; then echo "No runs found under $(RUN_ROOT)/$(EXP)"; exit 0; fi; \
+for run in $$runs; do \
+  echo "$(1) $$run"; \
+  $(2); \
+done
+endef
 
 # =========================
 # Stage: fixed points
 # =========================
 fixedpoints:
-	$(call banner,FIXED POINTS over existing runs in $(RUN_ROOT)/$(EXP))
-	@set -e; \
-	$(call FOR_EACH_RUN,[fp], \
-	  $(call RUN_FP,fixed_point_finder, \
-	    --run "$$run" \
-	    --contexts $(CTX) \
-	    --n_init $(FP_N_INIT) \
-	    --tol $(FP_TOL) \
-	    --max_iter $(FP_MAX_IT) \
-	    --seq_len $(FP_SEQ_LEN) \
-	    --batch $(FP_BATCH) \
-	    --task $(TASK) \
-	    --device cpu ))
+	$(call banner,FIXED POINTS)
+	@$(call _for_each_run,[fp], \
+	$(PY) "$(FP_DIR)/fixed_point_finder.py" \
+	  --run "$$run" \
+	  --contexts $(CTX) \
+	  --n_init $(FP_N_INIT) \
+	  --tol $(FP_TOL) \
+	  --max_iter $(FP_MAX_IT) \
+	  --seq_len $(FP_SEQ_LEN) \
+	  --batch $(FP_BATCH) \
+	  --task $(TASK) \
+	  --device cpu)
 
 # =========================
 # Stage: motif analysis
 # =========================
 analyze:
-	$(call banner,MOTIF ANALYSIS over existing runs)
-	@set -e; \
-	$(call FOR_EACH_RUN,[analyze], \
-	  $(call RUN_FP,analyze_motifs, \
-	    --run "$$run" \
-	    --contexts $(CTX) \
-	    --k_slow $(K_SLOW) \
-	    --m_overlap $(M_OVERLAP) ))
+	$(call banner,MOTIF ANALYSIS)
+	@$(call _for_each_run,[analyze], \
+	$(PY) "$(FP_DIR)/analyze_motifs.py" \
+	  --run "$$run" \
+	  --contexts $(CTX) \
+	  --k_slow $(K_SLOW) \
+	  --m_overlap $(M_OVERLAP))
 
 # =========================
 # Stage: robustness tests
 # =========================
 robustness:
-	$(call banner,ROBUSTNESS over existing runs)
-	@set -e; \
-	$(call FOR_EACH_RUN,[robust], \
-	  $(call RUN_FP,robustness_tests, \
-	    --run "$$run" \
-	    --task $(TASK) \
-	    --alphaI $(ALPHA_I) \
-	    --noise_std $(NOISE_STD) \
-	    --seq_len $(ROB_SEQ_LEN) \
-	    --batch $(ROB_BATCH) \
-	    --device cpu ))
+	$(call banner,ROBUSTNESS)
+	@$(call _for_each_run,[robust], \
+	$(PY) "$(FP_DIR)/robustness_tests.py" \
+	  --run "$$run" \
+	  --task $(TASK) \
+	  --alphaI $(ALPHA_I) \
+	  --noise_std $(NOISE_STD) \
+	  --seq_len $(ROB_SEQ_LEN) \
+	  --batch $(ROB_BATCH) \
+	  --device cpu)
 
 # =========================
 # Stage: aggregate + plots
 # =========================
 aggregate:
 	$(call banner,AGGREGATE → $(SUMMARY_CSV))
-	@mkdir -p $(dir $(SUMMARY_CSV))
-	@$(call RUN_FP,aggregate_results, --root $(RUN_ROOT)/$(EXP) --out $(SUMMARY_CSV))
+	@mkdir -p "$(dir $(SUMMARY_CSV))"
+	@$(PY) "$(FP_DIR)/aggregate_results.py" --root "$(RUN_ROOT)/$(EXP)" --out "$(SUMMARY_CSV)"
 
 plots:
 	$(call banner,PLOTS → $(FIGS_DIR))
-	@mkdir -p $(FIGS_DIR)
-	@$(call RUN_FP,plot_reports, --summary $(SUMMARY_CSV) --outdir $(FIGS_DIR))
+	@mkdir -p "$(FIGS_DIR)"
+	@$(PY) "$(FP_DIR)/plot_reports.py" --summary "$(SUMMARY_CSV)" --outdir "$(FIGS_DIR)"
 
 # =========================
 # Extra: ring fixed-point panels
 # =========================
 ringplots:
-	$(call banner,RING FIXED-POINT PLOTS over existing runs)
-	@set -e; \
-	$(call FOR_EACH_RUN,[ringplot], \
-	  $(call RUN_FP,plot_ring_fixed_points, \
-	    --run "$$run" \
-	    --contexts $(CTX) \
-	    --seq_len $(FP_SEQ_LEN) \
-	    --batch $(FP_BATCH) \
-	    --task $(TASK) \
-	    --fixation_channel 0 \
-	    --mask_threshold 0.5 \
-	    --z_mode logit ))
+	$(call banner,RING FIXED-POINT PANELS)
+	@$(call _for_each_run,[ringplot], \
+	$(PY) "$(FP_DIR)/plot_ring_fixed_points.py" \
+	  --run "$$run" \
+	  --contexts $(CTX) \
+	  --seq_len $(FP_SEQ_LEN) \
+	  --batch $(FP_BATCH) \
+	  --task $(TASK) \
+	  --fixation_channel 0 \
+	  --mask_threshold 0.5 \
+	  --z_mode logit)
 
 # =========================
 # Utilities
 # =========================
 list:
-	@printf "Runs under %s:\n" "$(RUN_ROOT)/$(EXP)"
-	@find "$(RUN_ROOT)/$(EXP)" -type d -name 'seed=*' | sort || true
+	@printf "Runs under %s:\n" "$(RUN_ROOT)/$(EXP)"; \
+	find "$(RUN_ROOT)/$(EXP)" -type d -name 'seed=*' | sort || true
 
 runs: list
 
