@@ -5,7 +5,7 @@ SHELL := /bin/bash
 export PYTHONPATH := $(PWD)
 
 # ---- config (override: make all EXP=myexp PIs="0.2 0.5") ----
-PY          ?= python
+PY 			?= python -u
 RUN_ROOT    ?= experiments/runs
 EXP         ?= ei_pI
 
@@ -15,8 +15,8 @@ SEEDS       ?= 0 1 2 3 4
 
 TASK        ?= dm1
 HIDDEN      ?= 256
-EPOCHS      ?= 20
-STEPS       ?= 1000
+EPOCHS      ?= 10
+STEPS       ?= 500
 LR_EG       ?= 1.5
 LR_GD       ?= 0.01
 DEVICE      ?= auto
