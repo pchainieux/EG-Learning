@@ -5,7 +5,7 @@ import pandas as pd
 import torch
 import numpy as np
 
-from ei_gradient.src.io import load_yaml, ensure_outdir, save_csv, save_json, load_tensors
+from ei_gradient.src.io_utils import load_yaml, ensure_outdir, save_csv, save_json, load_tensors
 from ei_gradient.src.metrics import (
     timecourse_l2, timecourse_mean_abs, cumulative_backprop, fisher_like,
     cosine_alignment, gate_adjusted_timecourse, summarize_ei_distributions
@@ -21,8 +21,8 @@ def main():
     out_dir = ensure_outdir(cfg.get("out_dir", "outputs"), exp_id)
 
     T = load_tensors(out_dir / "grads.pt")
-    h_seq: torch.Tensor = T["h_seq"]      # [T,B,N]
-    grad_h: torch.Tensor = T["grad_h"]    # [T,B,N]
+    h_seq: torch.Tensor = T["h_seq"]
+    grad_h: torch.Tensor = T["grad_h"]
     idx_E: torch.Tensor = T["idx_E"].bool()
     idx_I: torch.Tensor = T["idx_I"].bool()
     u_seq: torch.Tensor | None = T.get("u_seq", None)
@@ -35,8 +35,8 @@ def main():
     if u_seq is not None:
         gated = gate_adjusted_timecourse(grad_h, u_seq, idx_E, idx_I, activation=cfg.get("activation", "softplus"))
 
-    Wbp = cumulative_backprop(grad_h)  # [N]
-    Fisher = fisher_like(grad_h)       # [N]
+    Wbp = cumulative_backprop(grad_h)
+    Fisher = fisher_like(grad_h)
     summaries = summarize_ei_distributions(Wbp, Fisher, idx_E, idx_I)
 
     t_axis = np.arange(h_seq.shape[0])

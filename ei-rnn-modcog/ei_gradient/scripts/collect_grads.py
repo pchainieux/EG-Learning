@@ -4,30 +4,82 @@ from pathlib import Path
 from typing import Dict, Any, Tuple
 import torch
 
-from ei_gradient.src.io import load_yaml, ensure_outdir, save_yaml, save_tensors
+from ei_gradient.src.io_utils import load_yaml, ensure_outdir, save_yaml, save_tensors
 from ei_gradient.src.hooks import collect_hidden_and_grads, ei_indices_from_sign_matrix
 
 def build_model_and_load(checkpoint_path: str, device: str) -> Tuple[torch.nn.Module, Dict[str, Any]]:
-    """
-    Rebuild EIRNN from the training checkpoint and return:
-      - model (on device, eval mode)
-      - extra dict with 'signs' (E/I sign vector) and the original 'config'
-    """
-    ckpt = torch.load(checkpoint_path, map_location=device)
-    state = ckpt["model"] if "model" in ckpt else ckpt["model_state_dict"]
-    cfg_full = ckpt.get("config", {}) or {}
-    model_cfg = (cfg_full.get("model", {}) or {})
+    import torch, sys
+    import numpy as np
 
-    # Infer dims from weights to avoid depending on dataset here
-    W_xh = state["W_xh"]                   # [H, D_in]
-    W_out_w = state["W_out.weight"]        # [C_out, H]
+    try:
+        import numpy as _np
+        if getattr(_np, "_core", None) is not None:
+            sys.modules.setdefault("numpy._core", _np._core)
+    except Exception:
+        pass
+
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+
+    state = None
+    if isinstance(ckpt, dict):
+        for k in ("model", "model_state_dict", "state_dict", "state", "weights", "net"):
+            v = ckpt.get(k)
+            if isinstance(v, dict) and any(isinstance(t, torch.Tensor) for t in v.values()):
+                state = v
+                break
+        if state is None and all(isinstance(v, torch.Tensor) for v in ckpt.values()):
+            state = ckpt
+    else:
+        try:
+            state = ckpt.state_dict()
+        except Exception:
+            raise RuntimeError("Unrecognized checkpoint format; cannot obtain state_dict.")
+
+    if state is None:
+        raise KeyError(f"Could not find a weights dict in checkpoint. "
+                       f"Top-level keys: {list(ckpt.keys()) if isinstance(ckpt, dict) else type(ckpt)}")
+
+    def _strip_prefix(d, prefixes=("module.", "model.", "net.")):
+        out = {}
+        for k, v in d.items():
+            k2 = k
+            for p in prefixes:
+                if k2.startswith(p):
+                    k2 = k2[len(p):]
+            out[k2] = v
+        return out
+
+    state = _strip_prefix(state)
+
+
+    def _maybe_alias_output(d):
+        if "W_out.weight" in d:
+            return d
+        remap = dict(d)
+        for k in list(d.keys()):
+            if k.endswith("out.weight") or "readout.weight" in k or k.endswith("W_out_w"):
+                remap["W_out.weight"] = d[k]
+            if k.endswith("out.bias") or "readout.bias" in k or k.endswith("W_out_b"):
+                remap["W_out.bias"] = d[k]
+        return remap
+
+    state = _maybe_alias_output(state)
+
+    if "W_xh" not in state or "W_out.weight" not in state:
+        preview = list(state.keys())[:20]
+        raise KeyError(f"Missing required keys: need 'W_xh' and 'W_out.weight'. Found (preview): {preview}")
+
+    W_xh = state["W_xh"]
+    W_out_w = state["W_out.weight"]
     H, D_in = W_xh.shape
     C_out = W_out_w.shape[0]
 
-    # Pull hyperparams (fallbacks match your defaults)
     from src.models.ei_rnn import EIRNN, EIConfig
+    cfg_full = ckpt.get("config", {}) if isinstance(ckpt, dict) else {}
+    model_cfg = (cfg_full.get("model", {}) or {}) if isinstance(cfg_full, dict) else {}
+
     ei_cfg = EIConfig(
-        hidden_size=H,  # make sure it matches checkpoint
+        hidden_size=H,
         exc_frac=float(model_cfg.get("exc_frac", 0.8)),
         spectral_radius=float(model_cfg.get("spectral_radius", 1.2)),
         input_scale=float(model_cfg.get("input_scale", 1.0)),
@@ -37,26 +89,29 @@ def build_model_and_load(checkpoint_path: str, device: str) -> Tuple[torch.nn.Mo
     )
 
     model = EIRNN(input_size=D_in, output_size=C_out, cfg=ei_cfg).to(device)
-    model.load_state_dict(state)
+
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    if missing or unexpected:
+        print(f"[Warning] load_state_dict strict=False | missing: {missing} | unexpected: {unexpected}")
     model.eval()
 
-    # Use sign_vec buffer from the loaded model for E/I masks
-    extra = {"signs": model.sign_vec.detach().to(device), "config": cfg_full}
+    for p in model.parameters():
+        p.requires_grad_(False)
+
+    signs = getattr(model, "sign_vec", None)
+    signs = signs.detach().to(device) if isinstance(signs, torch.Tensor) else None
+
+    extra = {"signs": signs, "config": cfg_full}
     return model, extra
 
 
 def get_val_loader(cfg: Dict[str, Any]):
-    """
-    Build a small validation iterator using the same data pathway as training.
-    Yields dicts with keys: 'x' [B,T,D] and 'y' [B,T].
-    """
     data_cfg = cfg.get("data", {}) or {}
     tasks = cfg.get("tasks", ["dm1"])
     if isinstance(tasks, str):
         tasks = [tasks]
     task = tasks[0]
 
-    # Defaults match train_singlehead_modcog.py
     batch_size = int(data_cfg.get("batch_size", 128))
     seq_len    = int(data_cfg.get("seq_len", 350))
 
@@ -66,36 +121,31 @@ def get_val_loader(cfg: Dict[str, Any]):
     ds_val = Dataset(env, batch_size=batch_size, seq_len=seq_len, batch_first=True)
 
     def _iterator():
-        # infinite generator; caller (collect_grads.py) controls max_batches
         while True:
-            X, Y = ds_val()  # numpy arrays: X [B,T,D], Y [B,T]
+            X, Y = ds_val()
             yield {
                 "x": torch.from_numpy(X).float(),
                 "y": torch.from_numpy(Y).long(),
             }
 
     return _iterator()
-# ============================
 
-
-def forward_collect(model: torch.nn.Module, batch: Dict[str, Any], return_states: bool):
-    """
-    Time-unroll the EIRNN to expose h_seq and u_seq, compute the same loss as training,
-    and return (logits, cache). Supports batch['x_override'] for grad_x.
-    """
-    X = batch.get("x_override", None)
-    if X is None:
-        X = batch["x"]  # [B,T,D]
-    Y = batch["y"]      # [B,T] (labels in {0..D_ring-1}, to be shifted by +1 at decision)
-
-    # Use the same helpers as training
+def forward_collect(model: torch.nn.Module, batch: dict, return_states: bool):
+    import torch
     import torch.nn as nn
     import torch.nn.functional as F
 
+    X = batch.get("x_override", None)
+    if X is None:
+        X = batch["x"]
+    Y = batch["y"]
+    B, T, D = X.shape
+    H = model.cfg.hidden_size
+    device = X.device
+
     @torch.no_grad()
-    def decision_mask_from_inputs(Xt: torch.Tensor, thresh: float = 0.5) -> torch.Tensor:
-        # decision time where fixation channel < thresh
-        return (Xt[..., 0] < thresh)
+    def decision_mask_from_inputs(Xbt: torch.Tensor, thresh: float = 0.5) -> torch.Tensor:
+        return (Xbt[..., 0] < thresh) 
 
     class ModCogLossCombined(nn.Module):
         def __init__(self, label_smoothing: float = 0.1, fixdown_weight: float = 0.05):
@@ -103,77 +153,69 @@ def forward_collect(model: torch.nn.Module, batch: Dict[str, Any], return_states
             self.mse = nn.MSELoss()
             self.ce  = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
             self.fixdown_weight = float(fixdown_weight)
-        def forward(self, outputs, labels, dec_mask):
-            # outputs: [B,T,C]; labels: [B,T] in {0..K-1} for decisions
+
+        def forward(self, outputs: torch.Tensor, labels: torch.Tensor, dec_mask: torch.Tensor):
             B, T, C = outputs.shape
-            target_fix = outputs.new_zeros(B, T, C); target_fix[..., 0] = 1.0
-            loss_fix = self.mse(outputs[~dec_mask], target_fix[~dec_mask]) if (~dec_mask).any() else outputs.sum()*0.0
+            target_fix = outputs.new_zeros(B, T, C)
+            target_fix[..., 0] = 1.0
+
+            if (~dec_mask).any():
+                loss_fix = self.mse(outputs[~dec_mask], target_fix[~dec_mask])
+            else:
+                loss_fix = outputs.sum() * 0.0
+
             if dec_mask.any():
-                # shift labels by +1 to account for fixation logit at index 0
                 labels_shift = labels + 1
                 loss_dec = self.ce(outputs[dec_mask], labels_shift[dec_mask])
                 fix_logits_dec = outputs[..., 0][dec_mask]
                 loss_fixdown = (fix_logits_dec ** 2).mean() * self.fixdown_weight
             else:
-                loss_dec = outputs.sum()*0.0
-                loss_fixdown = outputs.sum()*0.0
+                loss_dec = outputs.sum() * 0.0
+                loss_fixdown = outputs.sum() * 0.0
+
             return loss_fix + loss_dec + loss_fixdown
 
-    # Unroll with access to model internals
-    B, T, _ = X.shape
-    H = model.cfg.hidden_size
-    device = X.device
+    h = torch.zeros(B, H, device=device, requires_grad=True)
 
-    h = X.new_zeros(B, H, requires_grad=False)
     Wx, Wh, b = model.W_xh, model.W_hh, model.b_h
     alpha = model._alpha
 
-    h_list = []
-    u_list = []
-    logits = X.new_zeros(B, T, model.W_out.out_features)
+    h_hist = []
+    u_hist = []
+    logits_list = []
 
     for t in range(T):
-        pre = X[:, t, :] @ Wx.T + h @ Wh.T + b                 # pre-activation u_t
-        if model._nl_kind == "softplus":
-            phi = F.softplus(pre)
-        else:
-            phi = torch.tanh(pre)
+        pre = X[:, t, :] @ Wx.T + h @ Wh.T + b
+        phi = F.softplus(pre) if model._nl_kind == "softplus" else torch.tanh(pre)
+        h = (1.0 - alpha) * h + alpha * phi
 
-        h = (1.0 - alpha) * h + alpha * phi                    # h_t
-        if model._readout_mode == "e_only":
-            h_ro = h * model.e_mask
-        else:
-            h_ro = h
-        logits[:, t, :] = model.W_out(h_ro)
+        h.retain_grad()
 
-        if return_states:
-            u_list.append(pre)
-            h_list.append(h)
+        u_hist.append(pre)
+        h_hist.append(h)
 
-    # Stack to [T,B,H] and ensure they're on-graph
+        h_ro = h * model.e_mask if getattr(model, "_readout_mode", "e_only") == "e_only" else h
+        logits_t = model.W_out(h_ro)
+        logits_list.append(logits_t)
+
+    logits = torch.stack(logits_list, dim=1).contiguous()
+    h_seq  = torch.stack(h_hist,   dim=0).contiguous()
+    u_seq  = torch.stack(u_hist,   dim=0).contiguous()
+
+    dec_mask = decision_mask_from_inputs(X, thresh=0.5)
+    loss = ModCogLossCombined(label_smoothing=0.1, fixdown_weight=0.05)(logits, Y, dec_mask)
+
+    cache = {}
     if return_states:
-        u_seq = torch.stack(u_list, dim=0)                     # [T,B,H]
-        h_seq = torch.stack(h_list, dim=0).requires_grad_(True)
-    else:
-        u_seq = None
-        h_seq = None
+        cache["h_seq"]  = h_seq
+        cache["u_seq"]  = u_seq
+        cache["x_seq"]  = X.transpose(0, 1).contiguous()
+        cache["h_list"] = h_hist
+        cache["loss"]   = loss
 
-    # Loss (same as training)
-    crit = ModCogLossCombined(
-        label_smoothing=float(batch.get("label_smoothing", 0.1)),
-        fixdown_weight=float(batch.get("fixdown_weight", 0.05)),
-    )
-    with torch.no_grad():
-        dec_mask = decision_mask_from_inputs(X, thresh=float(batch.get("mask_threshold", 0.5)))
-    loss = crit(logits, Y, dec_mask)
-
-    cache = {
-        "loss": loss,
-        "h_seq": h_seq,                 # [T,B,H]
-        "u_seq": u_seq,                 # [T,B,H]
-        "x_seq": X.transpose(0, 1),     # [T,B,D] for optional grad_x
-    }
     return logits, cache
+
+
 
 
 
@@ -266,14 +308,27 @@ def main():
     x_seq = _stack_time_batch(Xs) if Xs else None
     grad_x = _stack_time_batch(GXs) if GXs else None
 
-    tensors = {"h_seq": h_seq, "grad_h": grad_h, "idx_E": idx_E.cpu(), "idx_I": idx_I.cpu()}
-    if u_seq is not None:
-        tensors["u_seq"] = u_seq
-    if x_seq is not None:
+    want = cfg.get("save", {})
+    tensors = {"idx_E": idx_E.cpu(), "idx_I": idx_I.cpu()}
+    if want.get("ht", True):     tensors["h_seq"] = h_seq
+    if want.get("grad_h", True): tensors["grad_h"] = grad_h
+    if want.get("ut", False) and u_seq is not None: tensors["u_seq"] = u_seq
+    if want.get("grad_x", False) and grad_x is not None:
         tensors["x_seq"] = x_seq
-    if grad_x is not None:
         tensors["grad_x"] = grad_x
 
+
+    T, B, N = h_seq.shape
+    assert grad_h.shape == (T, B, N), f"grad_h has shape {grad_h.shape}, expected {(T, B, N)}"
+    assert idx_E.dtype == torch.bool and idx_I.dtype == torch.bool, "idx_E/idx_I must be boolean"
+    # disjoint and cover all units
+    assert torch.all(idx_E ^ idx_I) and torch.all(idx_E | idx_I), "E/I masks must be disjoint and exhaustive"
+    if "grad_x" in locals() and grad_x is not None:
+        D = grad_x.shape[-1]
+        assert x_seq is not None, "grad_x present but x_seq missing"
+        assert x_seq.shape == grad_x.shape == (T, B, D), \
+            f"x_seq {x_seq.shape} and grad_x {grad_x.shape} must both be (T,B,D)"
+        
     save_tensors(tensors, out_dir / "grads.pt")
     print(f"[collect_grads] Saved tensors to {out_dir / 'grads.pt'}")
 

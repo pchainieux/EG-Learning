@@ -1,0 +1,19 @@
+exp_id: exp_ei_credit
+out_dir: experiments/ei_gradient_outputs
+checkpoint: experiments/exp_1/singlehead_epoch003.pt
+ei_from_checkpoint: true
+activation: softplus
+task: dm1
+split: valid
+batch_size: 16
+max_batches: 4
+device: cpu
+time_window:
+  start: null
+  end: null
+  stride: 1
+save:
+  ht: true
+  ut: false
+  grad_h: true
+  grad_x: true

@@ -1,4 +1,3 @@
-# experiments/credit_assignment/creditlib/io.py
 from __future__ import annotations
 from typing import Dict, Any, Optional
 from pathlib import Path
@@ -8,9 +7,6 @@ import torch
 import pandas as pd
 import datetime as dt
 
-"""
-Lightweight I/O helpers for configs, tensors, and tables.
-"""
 
 def load_yaml(path: str | Path) -> Dict[str, Any]:
     with open(path, "r") as f:
@@ -58,15 +54,10 @@ def save_csv(df: pd.DataFrame, path: str | Path) -> None:
 
 
 def default_exp_dir(out_dir: str | Path, exp_id: Optional[str]) -> Path:
-    """If exp_id is None, create one from timestamp."""
     if exp_id is None:
         exp_id = f"exp_{timestamp()}"
     return ensure_outdir(out_dir, exp_id)
 
 
 def load_checkpoint(checkpoint_path: str | Path, map_location: str = "cpu") -> Dict[str, Any]:
-    """
-    Thin wrapper for torch.load to keep a single import site.
-    The calling code can interpret returned dict (model state, sign mask S, etc.)
-    """
     return torch.load(Path(checkpoint_path), map_location=map_location)

@@ -1,0 +1,25 @@
+exp_id: exp_ei_credit
+out_dir: outputs
+checkpoint: ../experiments/exp_1/singlehead_epoch003.pt
+ei_from_checkpoint: true
+activation: softplus
+task: dm1
+split: valid
+batch_size: 16
+max_batches: 4
+device: cpu
+time_window:
+  start: null
+  end: null
+  stride: 1
+save:
+  ht: true
+  ut: false
+  grad_h: true
+  grad_x: true
+notes: "Configuration for the EI credit assignment experiment.  During collection,\n\
+  the script will unroll the EI\u2011RNN on a validation set, record hidden\nstates\
+  \ h_t and backpropagate the task loss to obtain gradients \u2202\u2113/\u2202h_t\n\
+  and \u2202\u2113/\u2202x_t.  Setting grad_x: true enables saliency map computation\n\
+  showing which input channels drive decisions.  Pre\u2011activations (ut) are\nomitted\
+  \ here because gate\u2011adjusted analyses are not part of the described\nexperiment."

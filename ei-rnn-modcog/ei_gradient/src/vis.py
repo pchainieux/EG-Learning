@@ -1,14 +1,8 @@
-# experiments/credit_assignment/creditlib/vis.py
 from __future__ import annotations
 from typing import Optional, Sequence, Dict
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
-
-"""
-Matplotlib helpers for consistent, publication-friendly figures.
-No external style dependencies to keep things portable.
-"""
 
 _DEF_FIGSIZE_TC = (6.0, 3.0)
 _DEF_FIGSIZE_DIST = (6.0, 3.0)
@@ -29,10 +23,6 @@ def plot_timecourses(
     ylabel: str = "",
     outpath: Optional[Path] = None
 ) -> None:
-    """
-    Plot multiple time-series (e.g., tc_l2_E vs tc_l2_I).
-    'series' is a dict name -> y[t].
-    """
     fig, ax = plt.subplots(1, 1, figsize=_DEF_FIGSIZE_TC)
     for name, y in series.items():
         ax.plot(t, y, label=name, linewidth=2)
@@ -51,9 +41,6 @@ def plot_distributions(
     outpath: Optional[Path] = None,
     bins: int = 50,
 ) -> None:
-    """
-    Overlay histograms for several named vectors (e.g., Wbp_E vs Wbp_I).
-    """
     fig, ax = plt.subplots(1, 1, figsize=_DEF_FIGSIZE_DIST)
     for name, vec in data.items():
         ax.hist(vec, bins=bins, alpha=0.5, density=True, label=name)
@@ -71,9 +58,6 @@ def plot_saliency_grid(
     cmap: str = "viridis",
     outpath: Optional[Path] = None
 ) -> None:
-    """
-    Show a list of 2D maps (e.g., time × channel) as a grid.
-    """
     K = len(saliency_maps)
     cols = min(3, K)
     rows = int(np.ceil(K / cols))
@@ -99,9 +83,6 @@ def plot_before_after_inputs(
     cmap: str = "viridis",
     outpath: Optional[Path] = None
 ) -> None:
-    """
-    Side-by-side visualization of an input (e.g., time × channel) before and after optimisation.
-    """
     fig, axes = plt.subplots(1, 2, figsize=(8, 3.5))
     ims = []
     ims.append(axes[0].imshow(x_before, aspect="auto", interpolation="nearest", cmap=cmap))
