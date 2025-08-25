@@ -1,4 +1,4 @@
-seed: 7
+seed: 1
 device: auto                  # 'auto', 'cpu', 'cuda'
 outdir: experiments/exp_1/          # create new folder if I want to save a specific experiment results
 
@@ -22,6 +22,9 @@ model:
   exc_frac: 0.8
   spectral_radius: 1.2
   input_scale: 1.0
+  leak: 0.2               # (0,1]
+  nonlinearity: softplus  # softplus | tanh
+  readout: all        # e_only | all
 
 optim:
   algorithm: eg               # 'eg' (EG on W_hh + GD on others), 'gd' (GD everywhere)

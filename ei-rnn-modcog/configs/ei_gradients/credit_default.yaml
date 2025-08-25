@@ -1,0 +1,35 @@
+# experiments/credit_assignment/configs/credit_default.yaml
+
+# Run metadata
+exp_id: "exp_ei_credit_001"
+out_dir: "outputs"
+
+# Checkpoint and model setup
+checkpoint: "/path/to/checkpoint.pt"
+ei_from_checkpoint: true     # derive E/I indices from sign matrix in the checkpoint
+activation: "softplus"       # "softplus" or "tanh"
+
+# Data / evaluation
+task: "dlygo"
+split: "valid"
+batch_size: 16
+max_batches: 4               # number of validation batches to collect (keeps memory manageable)
+device: "cuda"               # "cuda" or "cpu"
+
+# Time windowing and subsampling
+time_window:
+  start: null                # first timestep (inclusive); null = 0
+  end: null                  # last timestep (exclusive); null = T
+  stride: 1                  # subsample factor along time
+
+# What to save from collection
+save:
+  ht: true                   # hidden states h_t
+  ut: true                   # pre-activations u_t (if available)
+  grad_h: true               # ∂ℓ/∂h_t
+  grad_x: false              # ∂ℓ/∂x_t (more memory; enable if needed)
+
+# Notes (optional free-form)
+notes: |
+  Single-run gradient collection for E/I credit assignment analysis.
+  Increase max_batches cautiously if memory allows.

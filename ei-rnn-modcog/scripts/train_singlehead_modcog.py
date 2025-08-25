@@ -153,6 +153,10 @@ def main():
     spectral_radius = float(model_cfg.get("spectral_radius", 1.2))
     input_scale     = float(model_cfg.get("input_scale", 1.0))
 
+    leak       = float(model_cfg.get("leak", 0.2))                    # α in (0,1]
+    nonlin     = (model_cfg.get("nonlinearity", "softplus")).lower()  # "softplus" | "tanh"
+    readout    = (model_cfg.get("readout", "e_only")).lower()         # "e_only" | "all"
+
     algo      = (optim.get("algorithm", "eg")).lower()
     eg        = optim.get("eg", {});  gd = optim.get("gd", {})
     lr_eg     = float(eg.get("lr", 1.5)); mom_eg = float(eg.get("momentum", 0.0))
@@ -189,7 +193,15 @@ def main():
     model = EIRNN(
         input_size=input_dim,
         output_size=output_dim,
-        cfg=EIConfig(hidden_size=hidden, exc_frac=exc_frac, spectral_radius=spectral_radius, input_scale=input_scale),
+        cfg=EIConfig(
+            hidden_size=hidden,
+            exc_frac=exc_frac,
+            spectral_radius=spectral_radius,
+            input_scale=input_scale,
+            leak=leak,
+            nonlinearity=nonlin,
+            readout=readout,
+        ),
     ).to(device)
 
     # optimizer

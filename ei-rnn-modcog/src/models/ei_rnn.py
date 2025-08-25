@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 @dataclass
 class EIConfig:
@@ -8,6 +9,9 @@ class EIConfig:
     exc_frac: float = 0.8
     spectral_radius: float = 1.2
     input_scale: float = 1.0
+    leak: float = 0.2
+    nonlinearity: str = "softplus"
+    readout: str = "all"
 
 class EIRNN(nn.Module):
     def __init__(self, input_size: int, output_size: int, cfg: EIConfig):
@@ -21,15 +25,39 @@ class EIRNN(nn.Module):
         inh_idx = idx[n_exc:]
         sign = torch.ones(H)
         sign[inh_idx] = -1.0
-        self.register_buffer("sign_vec", sign)
+        self.register_buffer("sign_vec", sign)  
+
+        e_mask = (self.sign_vec > 0).float()
+        self.register_buffer("e_mask", e_mask)
 
         self.W_xh = nn.Parameter(torch.empty(H, input_size))
         self.W_hh = nn.Parameter(torch.empty(H, H))
         self.b_h   = nn.Parameter(torch.zeros(H))
 
-        self.W_out = nn.Linear(H, output_size) 
+        self.W_out = nn.Linear(H, output_size)
+
+        nl = (cfg.nonlinearity or "softplus").lower()
+        if nl not in ("softplus", "tanh"):
+            raise ValueError("EIConfig.nonlinearity must be 'softplus' or 'tanh'")
+        self._nl_kind = nl
+
+        ro = (cfg.readout or "e_only").lower()
+        if ro not in ("e_only", "all"):
+            raise ValueError("EIConfig.readout must be 'e_only' or 'all'")
+        self._readout_mode = ro
+
+        alpha = float(cfg.leak)
+        if not (0.0 < alpha <= 1.0):
+            raise ValueError("EIConfig.leak must be in (0, 1]")
+        self._alpha = alpha
 
         self.reset_parameters()
+
+    def _phi(self, x: torch.Tensor) -> torch.Tensor:
+        if self._nl_kind == "softplus":
+            return F.softplus(x)
+        else:
+            return torch.tanh(x) 
 
     def reset_parameters(self):
         H = self.cfg.hidden_size
@@ -53,8 +81,7 @@ class EIRNN(nn.Module):
 
     @torch.no_grad()
     def project_EI_(self):
-        s = self.sign_vec
-        self.W_hh.copy_(self.W_hh.abs() * s)
+        self.W_hh.copy_(self.W_hh.abs() * self.sign_vec)
 
     @torch.no_grad()
     def rescale_spectral_radius_(self, target=None):
@@ -63,18 +90,24 @@ class EIRNN(nn.Module):
         max_s = S.max().clamp_min(1e-6)
         self.W_hh.mul_(target / max_s)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, _ = x.shape
         H = self.cfg.hidden_size
         h = x.new_zeros(B, H)
         out = x.new_zeros(B, T, self.W_out.out_features)
-        relu = torch.relu
 
         Wx = self.W_xh
         Wh = self.W_hh
         b  = self.b_h
+        alpha = self._alpha
 
         for t in range(T):
-            h = relu(x[:, t, :] @ Wx.T + h @ Wh.T + b)
-            out[:, t, :] = self.W_out(h)
+            pre = x[:, t, :] @ Wx.T + h @ Wh.T + b
+            h = (1.0 - alpha) * h + alpha * self._phi(pre)
+
+            if self._readout_mode == "e_only":
+                h_ro = h * self.e_mask
+            else:
+                h_ro = h
+            out[:, t, :] = self.W_out(h_ro)
         return out

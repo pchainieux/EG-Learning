@@ -1,0 +1,40 @@
+# experiments/credit_assignment/configs/input_opt_default.yaml
+
+# Run metadata (uses same exp_id directory as metrics for convenience)
+exp_id: "exp_ei_credit_001"
+out_dir: "outputs"
+
+# Checkpoint and device
+checkpoint: "/path/to/checkpoint.pt"
+device: "cuda"
+
+# Target definition (example: class/logit at decision time)
+target:
+  type: "class"     # or "logit"
+  id: 0             # class index or logit index
+  time: "decision"  # or an explicit integer timestep
+
+# Optimisation schedule
+steps: 200
+step_size: 0.05
+
+# Constraints and regularisation
+epsilon: 0.05                 # L-infinity constraint on perturbation
+bounds: [0.0, 1.0]            # clamp range for inputs
+reg:
+  l2: 1.0e-4
+  tv: 1.0e-4
+
+# Data hook (if needed by your loader)
+task: "dlygo"
+split: "valid"
+batch_size: 8
+
+# Optional channel controls
+freeze_channels:              # names or indices (handled by your integration code if available)
+  - "fixation"
+
+# Notes
+notes: |
+  Performs projected gradient ascent on the input to increase target class confidence.
+  The script expects a batch with 'x' of shape [T,B,D]. Adjust integration if different.
