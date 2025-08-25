@@ -5,16 +5,16 @@ exp_id: "exp_ei_credit_001"
 out_dir: "outputs"
 
 # Checkpoint and model setup
-checkpoint: "/path/to/checkpoint.pt"
+checkpoint: "/experiments/single_task/multihead_epoch010.pt"
 ei_from_checkpoint: true     # derive E/I indices from sign matrix in the checkpoint
 activation: "softplus"       # "softplus" or "tanh"
 
 # Data / evaluation
-task: "dlygo"
+task: "dm1"
 split: "valid"
 batch_size: 16
 max_batches: 4               # number of validation batches to collect (keeps memory manageable)
-device: "cuda"               # "cuda" or "cpu"
+device: "cpu"               # "cuda" or "cpu"
 
 # Time windowing and subsampling
 time_window:

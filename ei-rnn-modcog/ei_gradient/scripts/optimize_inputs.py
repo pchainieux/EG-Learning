@@ -13,38 +13,61 @@ from ei_gradient.src.attribution import saliency, optimize_inputs
 # TODO: wire these to your repo
 # ============================
 def build_model_and_load(checkpoint_path: str, device: str):
-    """
-    Replace with your model construction + checkpoint restore.
-    Must return a model whose scoring function you can access for a chosen class/time.
-    """
-    raise NotImplementedError("Connect build_model_and_load() to your codebase")
-
+    # Reuse the implementation from collect_grads.py
+    from ei_gradient.scripts.collect_grads import build_model_and_load as _build
+    model, _extra = _build(checkpoint_path, device)
+    return model
 
 def get_val_loader(cfg: Dict[str, Any]):
-    """
-    Replace with your dataset/dataloader for the validation split.
-    """
-    raise NotImplementedError("Connect get_val_loader() to your codebase")
+    # Reuse the implementation from collect_grads.py
+    from ei_gradient.scripts.collect_grads import get_val_loader as _get
+    return _get(cfg)
 # ============================
 
 
 def make_forward_score(model, batch_template: Dict[str, torch.Tensor], cfg: Dict[str, Any]):
     """
-    Returns a callable x -> scalar to maximize. The callable should:
-      - Inject x (optimized inputs) into a batch built from `batch_template`
-      - Run the model
-      - Return a scalar score (e.g. negative loss for target class at decision time)
+    Returns a callable x -> scalar to maximize.
+    By default: average target-class logit over 'decision' time steps.
     """
-    target = cfg["target"]  # e.g., {"type":"class","id":0,"time":"decision"}
+    import torch.nn.functional as F
+
+    target = cfg.get("target", {}) or {}
+    target_id = int(target.get("id", 0)) + 1   # +1 because index 0 is fixation
+    mask_thresh = float(cfg.get("mask_threshold", 0.5))
+
+    def _decision_mask(X: torch.Tensor, thresh: float = 0.5) -> torch.Tensor:
+        return (X[..., 0] < thresh)
+
+    def _forward_logits(xBTD: torch.Tensor) -> torch.Tensor:
+        # time-unroll directly using model internals (same as forward_collect, but no caches)
+        B, T, _ = xBTD.shape
+        H = model.cfg.hidden_size
+        h = xBTD.new_zeros(B, H)
+        logits = xBTD.new_zeros(B, T, model.W_out.out_features)
+        alpha = model._alpha
+
+        for t in range(T):
+            pre = xBTD[:, t, :] @ model.W_xh.T + h @ model.W_hh.T + model.b_h
+            phi = F.softplus(pre) if model._nl_kind == "softplus" else torch.tanh(pre)
+            h = (1 - alpha) * h + alpha * phi
+            h_ro = h * model.e_mask if model._readout_mode == "e_only" else h
+            logits[:, t, :] = model.W_out(h_ro)
+        return logits
+
     def forward_score(x: torch.Tensor) -> torch.Tensor:
-        batch = dict(batch_template)
-        batch["x_override"] = x
-        # Example:
-        # y_hat, cache = model.forward_with_cache(batch, return_states=False)
-        # score = - model.loss_for_class(y_hat, target_id=target["id"], t=target_time, batch=batch)
-        # return score
-        raise NotImplementedError("Define how to compute the scalar score from model outputs")
+        # x is [T,B,D]; convert to [B,T,D] and build a batch copy
+        xBTD = x.transpose(0, 1).contiguous()
+        logits = _forward_logits(xBTD)
+        dec_mask = _decision_mask(xBTD, thresh=mask_thresh)      # [B,T]
+        if not dec_mask.any():
+            return logits.new_tensor(0.0, requires_grad=True)
+        # mean logit of the chosen class over decision steps
+        score = logits[..., target_id][dec_mask].mean()
+        return score
+
     return forward_score
+
 
 
 def main():
