@@ -1,0 +1,7 @@
+run: outputs/runs/ei_pI/eg/pI=0.35/seed=000
+task: dm1
+alphaI: [0.5, 0.75, 1.0, 1.25, 1.5]
+noise_std: [0.0, 0.1, 0.2]
+seq_len: 350
+batch: 128
+device: cpu

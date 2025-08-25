@@ -1,0 +1,11 @@
+run: outputs/runs/ei_pI/eg/pI=0.35/seed=000
+ckpt: "outputs/runs/smoke/eg/pI=0.35/seed=000/ckpt.pt"
+contexts: [memory, anti]
+n_init: 256
+tol: 1e-6
+max_iter: 500
+seq_len: 350
+batch: 256
+task: dm1
+device: cpu
+
