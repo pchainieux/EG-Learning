@@ -2,10 +2,10 @@ SHELL := /bin/bash
 export PYTHONPATH := $(PWD)
 
 PY ?= python -u
-PYTHON ?= $(PY) 
+PYTHON ?= $(PY)
 
 # =========================================================
-# EI GRADIENT EXPERIMENT  
+# EI GRADIENT EXPERIMENT
 # =========================================================
 
 CFG ?= configs/ei_gradient/credit.yaml
@@ -24,7 +24,7 @@ eigrad-plots:
 eigrad-all: eigrad-collect eigrad-metrics eigrad-plots
 
 # =========================================================
-# FIXED-POINTS PIPELINE 
+# FIXED-POINTS PIPELINE
 # =========================================================
 
 FP_RUN_ROOT    ?= outputs/runs
@@ -72,8 +72,8 @@ fp-all: fp-deps fp-train fp-fixedpoints fp-analyze fp-robustness fp-aggregate fp
 
 fp-deps:
 	$(call banner,Checking Python deps)
-	@$(PY) -c "import importlib, subprocess, sys; req=['loguru']; \
-missing=[r for r in req if importlib.util.find_spec(r) is None]; \
+	@$(PY) -c "import importlib.util as u, subprocess, sys; req=['loguru']; \
+missing=[r for r in req if u.find_spec(r) is None]; \
 subprocess.check_call([sys.executable,'-m','pip','install','-q']+missing) if missing else print('OK')"
 
 fp-train:
