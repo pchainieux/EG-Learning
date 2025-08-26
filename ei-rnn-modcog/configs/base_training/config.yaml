@@ -1,6 +1,6 @@
 seed: 1
 device: auto                  # 'auto', 'cpu', 'cuda'
-outdir: outputs/exp_1/          # create new folder if I want to save a specific experiment results
+outdir: outputs/exp_singlehead_full/          # create new folder if I want to save a specific experiment results
 
 tasks: ["dm1"]                # e.g., ["dm1", "dms"]
 
@@ -47,5 +47,5 @@ train:
   fixdown_weight: 0.5
   spectral_renorm_every: 0
   mask_threshold: 0.5
-  task_sampling: round_robin  # 'round_robin', 'random'
+  task_sampling: random  # 'round_robin', 'random'
   task_weights: []            # used when task_sampling == 'random'; [] => uniform
