@@ -1,0 +1,13 @@
+s_true: 1.0
+a0: 1.0e-2
+
+eta_gd: 0.1
+eta_eg: 0.1
+steps: 700
+ode_pts: 800
+show_continuous: true
+
+outdir: outputs/one_mode_case
+out: one_mode.pdf
+csv_out: one_mode_traj.npz
+title_suffix: "balanced init"

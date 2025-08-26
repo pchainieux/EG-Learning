@@ -1,0 +1,19 @@
+seeds: 20
+steps: 2000
+record_every: 20
+
+eta_gd: 0.01
+eta_eg: 0.1
+
+design_teacher: true
+spectrum: [1.0, 0.7, 0.45, 0.25]
+
+N1: 8
+N2: 16
+N3: 8
+P: 800
+noise_std: 0.02
+
+out: pdf
+outfile: alignment.pdf
+outdir: outputs/basis_alignment/

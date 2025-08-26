@@ -1,0 +1,27 @@
+P: 1000
+N1: 10
+N2: 10
+N3: 10
+noise_std: 0
+steps: 5000
+record_every: 1
+eta_eg: 0.01
+eta_gd: 0.05
+
+init_name: lowrank # Choice of gauss-small, gauss-big, uniform, diag, lowrank
+init_kwargs:
+  imbalanced_modes: [0, 1]
+  imbalance_factor: 10.0
+  base_factor: 0.01
+  random_mixing: false
+
+seed: 1
+num_modes: 10
+out: null
+no_show: false
+plot_curves: both  # Choice of eg, gd, both
+break_order: false
+outdir: outputs/two_layer
+out: plot.png
+mean: true 
+num_runs: 200  

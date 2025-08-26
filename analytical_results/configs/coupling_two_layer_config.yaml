@@ -1,0 +1,25 @@
+algo: eg
+P: 800
+N1: 8
+N2: 16
+N3: 8
+noise_std: 0.02
+eta: 0.1
+steps: 1200
+record_every: 20
+seed: 0
+
+pairs: "1,2 2,3"
+aggregate: false
+degeneracy_safe: true
+
+animate: true
+gif: one_layer_omega.gif 
+gif_mode: offdiag 
+gif_fps: 8 
+pairs: "1,2 1,3 2,3" 
+
+
+outdir: outputs/mode_coupling_two_layer
+outfile: two_layer_mode_coupling.pdf
+save_npz: two_layer_omega_hist.npz
