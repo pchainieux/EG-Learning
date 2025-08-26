@@ -4,9 +4,6 @@ export PYTHONPATH := $(PWD)
 PY ?= python -u
 PYTHON ?= $(PY) 
 
-export PY="python3 -u"
-export PYTHON="$PY"
-
 # =========================================================
 # EI GRADIENT EXPERIMENT  
 # =========================================================
