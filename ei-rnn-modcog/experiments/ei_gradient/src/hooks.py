@@ -6,18 +6,22 @@ from torch import Tensor
 def ei_indices_from_sign_matrix(S: Tensor) -> Tuple[Tensor, Tensor]:
     if S.dim() != 2 or S.size(0) != S.size(1):
         raise ValueError("S must be square [N, N] with column-wise fixed signs.")
-    col_mean = S.mean(dim=0)
-    signs = torch.sign(col_mean).to(torch.int8)
-    if not torch.all((signs == 1) | (signs == -1)):
-        any_pos = (S > 0).any(dim=0)
-        any_neg = (S < 0).any(dim=0)
-        signs = torch.where(any_pos & ~any_neg, torch.tensor(1, dtype=torch.int8, device=S.device),
-                 torch.where(any_neg & ~any_pos, torch.tensor(-1, dtype=torch.int8, device=S.device),
-                 torch.tensor(1, dtype=torch.int8, device=S.device)))
-    idx_E = signs == 1
-    idx_I = signs == -1
-    return idx_E, idx_I
 
+    any_pos = (S > 0).any(dim=0)
+    any_neg = (S < 0).any(dim=0)
+
+    mixed = any_pos & any_neg
+    if mixed.any():
+        bad = mixed.nonzero(as_tuple=False).flatten().tolist()
+        raise ValueError(f"Dale violation: mixed-sign columns at indices {bad}")
+
+    idx_E = any_pos & ~any_neg
+    idx_I = any_neg & ~any_pos
+
+    if not torch.all(idx_E ^ idx_I) or not torch.all(idx_E | idx_I):
+        raise ValueError("E/I masks must be disjoint and exhaustive (no zero columns).")
+
+    return idx_E, idx_I
 
 @torch.no_grad()
 def _maybe_slice_time(seq: Optional[Tensor], t0: Optional[int], t1: Optional[int], stride: int) -> Optional[Tensor]:
@@ -28,67 +32,122 @@ def _maybe_slice_time(seq: Optional[Tensor], t0: Optional[int], t1: Optional[int
     end = T if t1 is None else min(T, t1)
     return seq[start:end:stride].contiguous()
 
+@torch.no_grad()
+def _infer_decision_mask_from_inputs(x_seq: Tensor, fixation_channel: int = 0, thresh: float = 0.5) -> Tensor:
+    if x_seq.dim() != 3:
+        raise ValueError(f"x_seq must be (T,B,D); got {tuple(x_seq.shape)}")
+    T, B, D = x_seq.shape
+    if fixation_channel >= D:
+        raise ValueError(f"fixation_channel={fixation_channel} not < D={D}")
+    fix = x_seq[..., fixation_channel] 
+    return (fix < thresh)
 
 def collect_hidden_and_grads(
     model: torch.nn.Module,
-    batch: Dict[str, Any],
-    forward_collect: Callable[[torch.nn.Module, Dict[str, Any], bool], Tuple[Tensor, Dict[str, Tensor]]],
+    batch: Dict[str, Tensor],
+    device: str = "cpu",
     *,
-    compute_grad_x: bool = False,
-    time_window: Optional[Tuple[Optional[int], Optional[int]]] = None,
+    window: Optional[Tuple[int, int]] = None,  
     stride: int = 1,
+    return_grad_x: bool = False,
+    fixation_channel: int = 0,
+    decision_thresh: float = 0.5,
     retain_graph: bool = False,
 ) -> Dict[str, Tensor]:
+    model = model.to(device)
     model.eval()
 
-    _, cache = forward_collect(model, batch, True)
+    x_in: Tensor = batch["x"].to(device) 
+    y = batch.get("y", None)
+    dec_mask_ds: Optional[Tensor] = batch.get("mask_decision", None)
 
-    h_seq: Tensor = cache["h_seq"]
-    h_list: list[Tensor] = cache.get("h_list", None)
-    if h_list is None:
-        raise KeyError(
-            "forward_collect must return cache['h_list'] "
-            "as a list of per-timestep hidden states (each [B,N])."
+    need_x_grad = bool(return_grad_x)
+    x_for_grad = x_in.detach().clone().requires_grad_(need_x_grad)
+
+    out = model(x_for_grad, y, return_all=True)
+
+    loss: Tensor = out["loss"]
+    h_list = out["h_list"] 
+    u_list = out.get("u_list", None) 
+
+    for h in h_list:
+        h.retain_grad()
+    if u_list is not None:
+        for u in u_list:
+            u.retain_grad()
+
+    grad_h_full = torch.stack(
+        torch.autograd.grad(loss, h_list, retain_graph=True),
+        dim=0
+    ) 
+    grad_u_full = None
+    if u_list is not None:
+        gu_list = torch.autograd.grad(
+            loss, u_list, retain_graph=retain_graph, allow_unused=True
         )
-    loss: Tensor = cache["loss"]
-
-    grads_list = torch.autograd.grad(
-        loss, h_list, retain_graph=retain_graph, allow_unused=False
-    )
-    grad_h_full = torch.stack([g.detach() for g in grads_list], dim=0)
+        gu_list = [torch.zeros_like(u) if g is None else g for u, g in zip(u_list, gu_list)]
+        grad_u_full = torch.stack(gu_list, dim=0)
 
     grad_x_full = None
-    x_seq_TBD: Optional[Tensor] = cache.get("x_seq", None)
-    if compute_grad_x and x_seq_TBD is not None:
-        x_bt = x_seq_TBD.transpose(0, 1).contiguous().detach().requires_grad_(True)
+    if need_x_grad:
+        loss.backward(retain_graph=False)
+        grad_x_full = x_for_grad.grad.detach()
 
-        def _rerun_with_x(x_override_bt: Tensor) -> Tensor:
-            b2 = dict(batch)
-            b2["x_override"] = x_override_bt
-            _, cache2 = forward_collect(model, b2, True)
-            return cache2["loss"]
+    if x_in.dim() != 3:
+        raise ValueError(f"x must be 3D, got shape {tuple(x_in.shape)}")
+    B_or_T0, B_or_T1, D = x_in.shape
+    T_h, B_h, _ = grad_h_full.shape
 
-        loss2 = _rerun_with_x(x_bt)
-        gx_bt = torch.autograd.grad(loss2, x_bt, retain_graph=retain_graph)[0].detach()
-        grad_x_full = gx_bt.transpose(0, 1).contiguous()
+    if x_in.shape[0] == B_h and x_in.shape[1] == T_h:
+        x_tb = x_in.transpose(0, 1).contiguous()
+    elif x_in.shape[0] == T_h and x_in.shape[1] == B_h:
+        x_tb = x_in.contiguous()
+    else:
+        x_tb = x_in.transpose(0, 1).contiguous()
 
-    t0, t1 = (None, None) if time_window is None else time_window
-    h_slice  = _maybe_slice_time(h_seq.detach(), t0, t1, stride)
-    g_slice  = _maybe_slice_time(grad_h_full, t0, t1, stride)
-    u_slice  = _maybe_slice_time(cache.get("u_seq", None), t0, t1, stride)
-    x_slice  = _maybe_slice_time(x_seq_TBD.detach() if x_seq_TBD is not None else None, t0, t1, stride)
-    gx_slice = _maybe_slice_time(grad_x_full, t0, t1, stride) if grad_x_full is not None else None
+    gx_tb = None
+    if grad_x_full is not None:
+        if grad_x_full.shape == x_in.shape:
+            gx_tb = grad_x_full.transpose(0, 1).contiguous()
+        elif grad_x_full.shape == x_tb.shape:
+            gx_tb = grad_x_full.contiguous() 
+        else:
+            raise RuntimeError(
+                f"grad_x shape {tuple(grad_x_full.shape)} incompatible with x shapes "
+                f"{tuple(x_in.shape)} or {tuple(x_tb.shape)}"
+            )
 
-    out = {
-        "h_seq": h_slice,
-        "grad_h": g_slice,
-        "loss": loss.detach(),
+    T = grad_h_full.shape[0]
+    t0, t1 = (0, T) if window is None else window
+    sl = slice(t0, t1, stride)
+
+    h_slice  = torch.stack(h_list, dim=0)[sl].detach()         
+    g_slice  = grad_h_full[sl].detach()                        
+    u_slice  = torch.stack(u_list, dim=0)[sl].detach() if u_list is not None else None
+    gu_slice = grad_u_full[sl].detach() if grad_u_full is not None else None
+    x_slice  = x_tb[sl] if need_x_grad or ("x" in batch) else None
+    gx_slice = gx_tb[sl] if gx_tb is not None else None
+
+    if dec_mask_ds is not None:
+        dec_mask = dec_mask_ds.to(device)[sl]
+    elif x_slice is not None:
+        dec_mask = _infer_decision_mask_from_inputs(x_slice, fixation_channel, decision_thresh)
+    else:
+        dec_mask = torch.ones(h_slice.size(0), h_slice.size(1), dtype=torch.bool, device=device)
+
+    out_tensors: Dict[str, Tensor] = {
+        "h_seq":  h_slice,          
+        "grad_h": g_slice,          
+        "loss":   loss.detach(),
+        "dec_mask": dec_mask.detach(),  
     }
     if u_slice is not None:
-        out["u_seq"] = u_slice.detach()
+        out_tensors["u_seq"] = u_slice
+    if gu_slice is not None:
+        out_tensors["grad_u"] = gu_slice
     if x_slice is not None:
-        out["x_seq"] = x_slice
+        out_tensors["x_seq"] = x_slice  
     if gx_slice is not None:
-        out["grad_x"] = gx_slice
-    return out
+        out_tensors["grad_x"] = gx_slice     
 
+    return out_tensors

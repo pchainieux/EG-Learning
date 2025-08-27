@@ -7,8 +7,9 @@ import numpy as np
 
 from experiments.ei_gradient.src.io_utils import load_yaml, ensure_outdir, save_csv, save_json, load_tensors
 from experiments.ei_gradient.src.metrics import (
-    timecourse_l2, timecourse_mean_abs, cumulative_backprop, fisher_like,
-    cosine_alignment, gate_adjusted_timecourse, summarize_ei_distributions
+    timecourse_l2, timecourse_l2_per_unit, timecourse_mean_abs,
+    cumulative_backprop, fisher_like, cosine_alignment,
+    gate_adjusted_timecourse, summarize_ei_distributions
 )
 
 def main():
@@ -17,57 +18,78 @@ def main():
     args = p.parse_args()
 
     cfg = load_yaml(args.cfg)
-    exp_id = cfg.get("exp_id", "exp_ei_credit")
-    out_dir = ensure_outdir(cfg.get("out_dir", "outputs"), exp_id)
 
-    T = load_tensors(out_dir / "grads.pt")
-    h_seq: torch.Tensor = T["h_seq"]
-    grad_h: torch.Tensor = T["grad_h"]
-    idx_E: torch.Tensor = T["idx_E"].bool()
-    idx_I: torch.Tensor = T["idx_I"].bool()
-    u_seq: torch.Tensor | None = T.get("u_seq", None)
+    if "out_dir" not in cfg:
+        raise KeyError("Your config must define 'out_dir'.")
+    base_out = Path(cfg["out_dir"])
 
-    tc_l2 = timecourse_l2(grad_h, idx_E, idx_I)
-    tc_ma = timecourse_mean_abs(grad_h, idx_E, idx_I)
-    cos = cosine_alignment(h_seq, grad_h, idx_E, idx_I)
+    default_grads = base_out / "grads" / "grads.pt"
+    grads_path = Path(cfg.get("grads_path", default_grads))
+    if not grads_path.exists():
+        raise FileNotFoundError(
+            f"Could not find grads tensors at '{grads_path}'. "
+            f"Either run collect_grads first, or set 'grads_path' in your YAML."
+        )
 
-    gated = {}
-    if u_seq is not None:
-        gated = gate_adjusted_timecourse(grad_h, u_seq, idx_E, idx_I, activation=cfg.get("activation", "softplus"))
+    out_dir = ensure_outdir(base_out, "metrics")
 
-    Wbp = cumulative_backprop(grad_h)
-    Fisher = fisher_like(grad_h)
-    summaries = summarize_ei_distributions(Wbp, Fisher, idx_E, idx_I)
+    T = load_tensors(grads_path) 
 
-    t_axis = np.arange(h_seq.shape[0])
-    rows = []
-    for t in range(len(t_axis)):
-        row = {
-            "t": int(t_axis[t]),
-            "tc_l2_E": float(tc_l2["tc_l2_E"][t].item()),
-            "tc_l2_I": float(tc_l2["tc_l2_I"][t].item()),
-            "tc_ma_E": float(tc_ma["tc_ma_E"][t].item()),
-            "tc_ma_I": float(tc_ma["tc_ma_I"][t].item()),
-            "cos_E": float(cos["cos_E"][t].item()),
-            "cos_I": float(cos["cos_I"][t].item()),
-        }
-        if gated:
-            row["tc_l2_E_gated"] = float(gated["tc_l2_E_gated"][t].item())
-            row["tc_l2_I_gated"] = float(gated["tc_l2_I_gated"][t].item())
-        rows.append(row)
-    df_tc = pd.DataFrame(rows)
-    save_csv(df_tc, out_dir / "metrics_timecourse.csv")
+    h_seq   = T["h_seq"] 
+    g_h     = T["grad_h"]
+    idx_E   = T["idx_E"].bool()
+    idx_I   = T["idx_I"].bool()
+    decmask = T.get("dec_mask", None)
+
+    g_u     = T.get("grad_u", None)
+    phi_p   = T.get("phi_prime", None)
+
+    tc = {}
+    tc.update(timecourse_mean_abs(g_h, idx_E, idx_I))
+    tc.update(timecourse_l2(g_h, idx_E, idx_I))
+    tc.update(timecourse_l2_per_unit(g_h, idx_E, idx_I))
+    tc.update(cosine_alignment(h_seq, g_h, idx_E, idx_I))
+    tc.update({k.replace("tc_abs", "tc_abs_pre"): v for k, v in gate_adjusted_timecourse(g_u, g_h, phi_p, idx_E, idx_I).items()})
+
+    df_tc = pd.DataFrame({k: v.cpu().numpy() for k, v in tc.items()})
+    save_csv(df_tc, out_dir / "metrics_timecourses.csv")
+
+    summaries = {}
+    if decmask is not None:
+        mask_dec = decmask.bool()
+        mask_fix = ~mask_dec
+
+        def masked_mean_over_tb(x: torch.Tensor, m: torch.Tensor) -> torch.Tensor:
+            if x.dim() != 3 or m.dim() != 2:
+                raise ValueError(f"masked_mean_over_tb expects x (T,B,N) and m (T,B); got {tuple(x.shape)}, {tuple(m.shape)}")
+            w = m.float().unsqueeze(-1)
+            num = (x * w).sum(dim=(0,1))
+            den = w.sum(dim=(0,1)).clamp_min(1e-12)
+            return num / den
+
+        mean_g_fix = masked_mean_over_tb(g_h.abs(), mask_fix)
+        mean_g_dec = masked_mean_over_tb(g_h.abs(), mask_dec)
+
+        summaries["mean_abs_grad_fix_E"] = float(mean_g_fix[idx_E].mean().item())
+        summaries["mean_abs_grad_fix_I"] = float(mean_g_fix[idx_I].mean().item())
+        summaries["mean_abs_grad_dec_E"] = float(mean_g_dec[idx_E].mean().item())
+        summaries["mean_abs_grad_dec_I"] = float(mean_g_dec[idx_I].mean().item())
+
+    Wbp_sum, Wbp_mean = cumulative_backprop(g_h) 
+    Fisher = fisher_like(g_h) 
 
     df_units = pd.DataFrame({
-        "Wbp": Wbp.cpu().numpy(),
+        "Wbp_sum": Wbp_sum.cpu().numpy(),
+        "Wbp_mean": Wbp_mean.cpu().numpy(),
         "Fisher": Fisher.cpu().numpy(),
         "type": np.where(idx_E.cpu().numpy(), "E", "I"),
     })
     save_csv(df_units, out_dir / "metrics_units.csv")
 
+    summaries.update(summarize_ei_distributions(Wbp_sum, Wbp_mean, Fisher, idx_E, idx_I))
     save_json(summaries, out_dir / "metrics_summary.json")
 
-    print(f"[compute_metrics] Wrote:\n - {out_dir/'metrics_timecourse.csv'}\n - {out_dir/'metrics_units.csv'}\n - {out_dir/'metrics_summary.json'}")
+    print(f"[compute_metrics] Wrote:\n - {out_dir/'metrics_timecourses.csv'}\n - {out_dir/'metrics_units.csv'}\n - {out_dir/'metrics_summary.json'}")
 
 if __name__ == "__main__":
     main()

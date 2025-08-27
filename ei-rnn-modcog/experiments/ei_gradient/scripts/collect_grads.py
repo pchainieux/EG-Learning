@@ -3,14 +3,14 @@ import argparse
 from pathlib import Path
 from typing import Dict, Any, Tuple
 import torch
+import numpy as np
+import random
+import sys
 
 from experiments.ei_gradient.src.io_utils import load_yaml, ensure_outdir, save_yaml, save_tensors
 from experiments.ei_gradient.src.hooks import collect_hidden_and_grads, ei_indices_from_sign_matrix
 
 def build_model_and_load(checkpoint_path: str, device: str) -> Tuple[torch.nn.Module, Dict[str, Any]]:
-    import torch, sys
-    import numpy as np
-
     try:
         import numpy as _np
         if getattr(_np, "_core", None) is not None:
@@ -215,123 +215,100 @@ def forward_collect(model: torch.nn.Module, batch: dict, return_states: bool):
 
     return logits, cache
 
-
-
-
-
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--cfg", type=str, required=True, help="Path to YAML config")
+    p.add_argument("--cfg", type=str, required=True)
     args = p.parse_args()
 
     cfg = load_yaml(args.cfg)
-    exp_id = cfg.get("exp_id", "exp_ei_credit")
-    out_dir = ensure_outdir(cfg.get("out_dir", "outputs"), exp_id)
-    save_yaml(cfg, out_dir / "config.yaml")
+    out_dir = ensure_outdir(cfg["out_dir"], "grads")
 
-    device = cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu")
-    model, extra = build_model_and_load(cfg["checkpoint"], device)
-    model.to(device).eval()
+    seed = int(cfg.get("seed", 12345))
+    random.seed(seed); np.random.seed(seed); torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
-    # E/I indices from Dale sign matrix S or signs
-    if cfg.get("ei_from_checkpoint", True):
-        S = extra.get("S", None)
-        if S is None:
-            signs = extra.get("signs", None)
-            if signs is not None:
-                # fabricate S from signs if needed
-                s = torch.as_tensor(signs, device=device, dtype=torch.float32)
-                S = torch.sign(s)[None, :].repeat(s.numel(), 1)  # [N,N] with col-signs
-            else:
-                raise RuntimeError("No 'S' or 'signs' found in checkpoint extras.")
-        if isinstance(S, torch.Tensor) and S.device != torch.device(device):
-            S = S.to(device)
+    device = cfg.get("device", "cpu")
+    ckpt_path = cfg["checkpoint"]
+    model, extra = build_model_and_load(ckpt_path, device)
+
+    if "S" in extra:
+        S = torch.tensor(extra["S"], dtype=torch.float32, device=device)
         idx_E, idx_I = ei_indices_from_sign_matrix(S)
+    elif "signs" in extra:
+        s = extra["signs"].detach().clone().to(torch.int8).to(device).view(-1)        
+        if not torch.all((s == 1) | (s == -1)):
+            raise ValueError("Invalid 'signs' vector: must be ±1.")
+        idx_E = (s == 1)
+        idx_I = (s == -1)
     else:
-        raise RuntimeError("Set ei_from_checkpoint=true or provide indices manually.")
+        raise KeyError("Checkpoint must contain either 'S' (Dale columns) or 'signs' vector.")
 
-    # Data loader
-    loader = get_val_loader(cfg)
+    loader = get_val_loader(cfg) 
+    data = next(loader)  
 
-    # Collection options
-    tw = cfg.get("time_window", {"start": None, "end": None, "stride": 1})
-    time_window = (tw.get("start", None), tw.get("end", None))
-    stride = int(tw.get("stride", 1))
-    compute_grad_x = bool(cfg.get("save", {}).get("grad_x", False))
-    max_batches = int(cfg.get("max_batches", 1))  # keep memory small; adjust as needed
+    class _ModelAdapter(torch.nn.Module):
+        def __init__(self, base_model: torch.nn.Module):
+            super().__init__()
+            self.base = base_model
+        def forward(self, x, y=None, return_all=False):
+            logits, cache = forward_collect(self.base, {"x": x, "y": y}, return_states=True)
+            if return_all:
+                return {
+                    "loss": cache["loss"],
+                    "h_list": cache["h_list"],
+                    "u_list": cache.get("u_seq", None).unbind(dim=0) if "u_seq" in cache else None,
+                }
+            return logits
 
-    # Accumulators (concatenate over batches)
-    Hs, Gs, Us = [], [], []
-    Xs, GXs = [], []
+    model_for_hooks = _ModelAdapter(model).to(device)
 
-    with torch.no_grad():
-        # we need gradients; temporarily enable grad during the inner loop
-        pass
+    tensors = collect_hidden_and_grads(
+        model_for_hooks,
+        data,
+        device=device,
+        window=tuple(cfg.get("window", [None, None])) if cfg.get("window") else None,
+        stride=int(cfg.get("stride", 1)),
+        return_grad_x=bool(cfg.get("return_grad_x", True)),
+        fixation_channel=int(cfg.get("fixation_channel", 0)),
+        decision_thresh=float(cfg.get("decision_thresh", 0.5)),
+    )
 
-    n_batches = 0
-    for batch in loader:
-        # Move tensors in batch to device if necessary
-        for k, v in list(batch.items()):
-            if isinstance(v, torch.Tensor):
-                batch[k] = v.to(device)
+    if "S" in extra:
+        S = torch.tensor(extra["S"], dtype=torch.float32, device=device)
+        idx_E, idx_I = ei_indices_from_sign_matrix(S)
+    elif "signs" in extra:
+        s = extra["signs"].detach().clone().to(torch.int8).to(device).view(-1)
+        if not torch.all((s == 1) | (s == -1)):
+            raise ValueError("Invalid 'signs' vector: must be ±1.")
+        idx_E = (s == 1)
+        idx_I = (s == -1)
+    else:
+        raise KeyError("Checkpoint must contain either 'S' or 'signs'.")
 
-        out = collect_hidden_and_grads(
-            model, batch, forward_collect,
-            compute_grad_x=compute_grad_x,
-            time_window=time_window,
-            stride=stride,
-            retain_graph=False
-        )
-        Hs.append(out["h_seq"].cpu())
-        Gs.append(out["grad_h"].cpu())
-        if "u_seq" in out:
-            Us.append(out["u_seq"].cpu())
-        if "x_seq" in out:
-            Xs.append(out["x_seq"].cpu())
-        if "grad_x" in out:
-            GXs.append(out["grad_x"].cpu())
+    tensors["idx_E"] = idx_E.detach().cpu()
+    tensors["idx_I"] = idx_I.detach().cpu()
 
-        n_batches += 1
-        if n_batches >= max_batches:
-            break
-
-    # Stack along batch dimension (dim=1).
-    def _stack_time_batch(lst):
-        if not lst:
-            return None
-        # Elements are [T',B,N] – concat B
-        return torch.cat(lst, dim=1)
-
-    h_seq = _stack_time_batch(Hs)   # [T', B_total, N]
-    grad_h = _stack_time_batch(Gs)  # [T', B_total, N]
-    u_seq = _stack_time_batch(Us) if Us else None
-    x_seq = _stack_time_batch(Xs) if Xs else None
-    grad_x = _stack_time_batch(GXs) if GXs else None
-
-    want = cfg.get("save", {})
-    tensors = {"idx_E": idx_E.cpu(), "idx_I": idx_I.cpu()}
-    if want.get("ht", True):     tensors["h_seq"] = h_seq
-    if want.get("grad_h", True): tensors["grad_h"] = grad_h
-    if want.get("ut", False) and u_seq is not None: tensors["u_seq"] = u_seq
-    if want.get("grad_x", False) and grad_x is not None:
-        tensors["x_seq"] = x_seq
-        tensors["grad_x"] = grad_x
-
-
+    h_seq = tensors["h_seq"]; g_h = tensors["grad_h"]
     T, B, N = h_seq.shape
-    assert grad_h.shape == (T, B, N), f"grad_h has shape {grad_h.shape}, expected {(T, B, N)}"
-    assert idx_E.dtype == torch.bool and idx_I.dtype == torch.bool, "idx_E/idx_I must be boolean"
-    # disjoint and cover all units
-    assert torch.all(idx_E ^ idx_I) and torch.all(idx_E | idx_I), "E/I masks must be disjoint and exhaustive"
-    if "grad_x" in locals() and grad_x is not None:
-        D = grad_x.shape[-1]
-        assert x_seq is not None, "grad_x present but x_seq missing"
-        assert x_seq.shape == grad_x.shape == (T, B, D), \
-            f"x_seq {x_seq.shape} and grad_x {grad_x.shape} must both be (T,B,D)"
-        
-    save_tensors(tensors, out_dir / "grads.pt")
-    print(f"[collect_grads] Saved tensors to {out_dir / 'grads.pt'}")
+    assert g_h.shape == (T, B, N), f"grad_h {g_h.shape} expected {(T,B,N)}"
+    assert idx_E.numel() == N and idx_I.numel() == N
 
+    if "grad_x" in tensors:
+        x_seq = tensors["x_seq"]; grad_x = tensors["grad_x"]
+        D = grad_x.shape[-1]
+        assert x_seq.shape == grad_x.shape == (T, B, D), \
+        f"x_seq {tuple(x_seq.shape)} and grad_x {tuple(grad_x.shape)} must both be (T,B,D)"
+
+    meta = {
+        "checkpoint": str(ckpt_path),
+        "seed": seed,
+        "device": device,
+    }
+    save_yaml(meta, out_dir / "meta.yaml")
+    save_tensors(tensors, out_dir / "grads.pt")
+
+    print(f"[collect_grads] Saved tensors to {out_dir / 'grads.pt'}")
 
 if __name__ == "__main__":
     main()
