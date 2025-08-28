@@ -248,6 +248,7 @@ def main():
             opt.zero_grad(set_to_none=True); loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             opt.step()
+            model.project_EI_()
 
             if renorm_every and (global_step % renorm_every == 0) and global_step > 0:
                 model.rescale_spectral_radius_()
