@@ -14,8 +14,8 @@ data:
     val_frac: 0.1
     build_if_missing: true 
     seed: 7
-    #paths:                 
-    #  dm1: outputs/cache/dm1_2000x128x350.npz
+    paths:                 
+      dm1: outputs/cache/dm1_2000x128x350.npz
 
 model:
   hidden_size: 256
