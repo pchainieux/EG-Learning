@@ -54,8 +54,15 @@ def evaluate_task(model, ds, device, mask_thresh, batches=50, input_noise_std=0.
     acc_all = acc_dec = 0.0; n_dec = 0
     for _ in range(batches):
         X, Y = ds()
-        X = X.float()
-        Y = Y.long()
+        if isinstance(X, np.ndarray):
+            X = torch.from_numpy(X).float().to(device)
+        else:  
+            X = X.float().to(device)
+
+        if isinstance(Y, np.ndarray):
+            Y = torch.from_numpy(Y).long().to(device)
+        else:
+            Y = Y.long().to(device)
         dec_mask = decision_mask_from_inputs(X, thresh=mask_thresh)
         X_in = X if input_noise_std == 0 else X + torch.normal(0.0, input_noise_std, size=X.shape, device=X.device)
         logits = model(X_in)
@@ -237,7 +244,16 @@ def main():
             train_ds = dsets[task][0]
 
             X, Y = train_ds()
+            if isinstance(X, np.ndarray):
+                X = torch.from_numpy(X).float().to(device)
+            else:
+                X = X.float().to(device)
 
+            if isinstance(Y, np.ndarray):
+                Y = torch.from_numpy(Y).long().to(device)
+            else:
+                Y = Y.long().to(device)
+                
             dec_mask = decision_mask_from_inputs(X, thresh=mask_thr)
             X_in = X if noise == 0 else X + torch.normal(0.0, noise, size=X.shape, device=X.device)
 
