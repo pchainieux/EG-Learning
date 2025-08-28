@@ -12,6 +12,11 @@ from src.models.ei_rnn import EIRNN, EIConfig
 from src.optim.sgd_eg import SGD_EG
 from src.utils.seeding import set_seed_all, pick_device, device_name
 
+def ensure_tensor(x, dtype, device):
+    if isinstance(x, np.ndarray):
+        return torch.from_numpy(x).to(device=device, dtype=dtype)
+    return x.to(device=device, dtype=dtype)
+
 @torch.no_grad()
 def decision_mask_from_inputs(X: torch.Tensor, thresh: float = 0.5) -> torch.Tensor:
     return (X[..., 0] < thresh)
@@ -54,15 +59,9 @@ def evaluate_task(model, ds, device, mask_thresh, batches=50, input_noise_std=0.
     acc_all = acc_dec = 0.0; n_dec = 0
     for _ in range(batches):
         X, Y = ds()
-        if isinstance(X, np.ndarray):
-            X = torch.from_numpy(X).float().to(device)
-        else:  
-            X = X.float().to(device)
+        X = ensure_tensor(X, torch.float32, device)
+        Y = ensure_tensor(Y, torch.long,    device)
 
-        if isinstance(Y, np.ndarray):
-            Y = torch.from_numpy(Y).long().to(device)
-        else:
-            Y = Y.long().to(device)
         dec_mask = decision_mask_from_inputs(X, thresh=mask_thresh)
         X_in = X if input_noise_std == 0 else X + torch.normal(0.0, input_noise_std, size=X.shape, device=X.device)
         logits = model(X_in)
@@ -244,15 +243,9 @@ def main():
             train_ds = dsets[task][0]
 
             X, Y = train_ds()
-            if isinstance(X, np.ndarray):
-                X = torch.from_numpy(X).float().to(device)
-            else:
-                X = X.float().to(device)
+            X = ensure_tensor(X, torch.float32, device)
+            Y = ensure_tensor(Y, torch.long,    device)
 
-            if isinstance(Y, np.ndarray):
-                Y = torch.from_numpy(Y).long().to(device)
-            else:
-                Y = Y.long().to(device)
                 
             dec_mask = decision_mask_from_inputs(X, thresh=mask_thr)
             X_in = X if noise == 0 else X + torch.normal(0.0, noise, size=X.shape, device=X.device)
@@ -292,13 +285,23 @@ def main():
         viz.save_loss_curve(epoch_train_losses, str(outdir / "loss.png"), smooth=sm)
         viz.save_per_task_accuracy_curves(acc_history, str(outdir / "acc_tasks.png"), smooth=sm)
 
-        Xv, Yv = dsets[tasks[0]][1]()
-        Xv_t = torch.from_numpy(Xv).float().to(device)
+        Xv, Yv = dsets[tasks[0]][1]()  
+        Xv_t = ensure_tensor(Xv, torch.float32, device)
         dec_mask_v = decision_mask_from_inputs(Xv_t, thresh=mask_thr)
-        logits_v = model(Xv_t)
-        viz.save_logits_time_trace(logits_v, str(outdir / f"example_trial_epoch{epoch:03d}.png"),
-                                   dec_mask=dec_mask_v, topk=3, sample_idx=0, title="Example trial logits")
-        viz.save_weight_hists_W_hh(model.W_hh, model.sign_vec, str(outdir / f"weights_hist_epoch{epoch:03d}.png"))
+        with torch.no_grad():
+            logits_v = model(Xv_t)
+        viz.save_logits_time_trace(
+            logits_v.detach(),  
+            str(outdir / f"example_trial_epoch{epoch:03d}.png"),
+            dec_mask=dec_mask_v,
+            topk=3,
+            sample_idx=0,
+            title="Example trial logits"
+        )
+        viz.save_weight_hists_W_hh(
+            model.W_hh, model.sign_vec,
+            str(outdir / f"weights_hist_epoch{epoch:03d}.png")
+        )
 
         ckpt = outdir / f"singlehead_epoch{epoch:03d}.pt"
         torch.save({"model": model.state_dict(), "config": cfg, "epoch": epoch}, ckpt)
