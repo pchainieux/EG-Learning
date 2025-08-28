@@ -1,13 +1,13 @@
 seed: 1
 device: auto                  # 'auto', 'cpu', 'cuda'
-outdir: outputs/exp_singlehead_gd_correct/          # create new folder if I want to save a specific experiment results
+outdir: outputs/exp_singlehead_eg/          # create new folder if I want to save a specific experiment results
 
 tasks: ["dm1"]                # e.g., ["dm1", "dms"]
 
 data:
   source: cached             # "online", "cached"
   batch_size: 512
-  seq_len: 20
+  seq_len: 350
 
   cache:
     num_batches: 2000
@@ -27,7 +27,7 @@ model:
   readout: all        # e_only | all
 
 optim:
-  algorithm: gd               # 'eg' (EG on W_hh + GD on others), 'gd' (GD everywhere)
+  algorithm: eg               # 'eg' (EG on W_hh + GD on others), 'gd' (GD everywhere)
   eg:
     lr: 0.5
     momentum: 0.0
@@ -39,12 +39,12 @@ optim:
     weight_decay: 1e-5
 
 train:
-  num_epochs: 10
+  num_epochs: 20
   steps_per_epoch: 500        # minibatches (online draw) per epoch
   val_batches: 10             # per task validation batches at epoch end
   grad_clip: 1.0
   input_noise_std: 0.0
-  fixdown_weight: 0.1
+  fixdown_weight: 0.5
   spectral_renorm_every: 0
   mask_threshold: 0.5
   task_sampling: round_robin  # 'round_robin', 'random'

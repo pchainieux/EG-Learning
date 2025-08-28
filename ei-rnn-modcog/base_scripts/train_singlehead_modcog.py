@@ -290,6 +290,18 @@ def main():
         dec_mask_v = decision_mask_from_inputs(Xv_t, thresh=mask_thr)
         with torch.no_grad():
             logits_v = model(Xv_t)
+
+        viz.save_task_trial_overview(
+            X=Xv_t.detach(),
+            logits=logits_v.detach(),
+            outpath=str(outdir / f"trial_overview_epoch{epoch:03d}.png"),
+            dec_mask=dec_mask_v,
+            obs_name=None,
+            sample_idx=0,
+            topk_logits=3,
+            title="Example trial",
+        )
+
         viz.save_logits_time_trace(
             logits_v.detach(),  
             str(outdir / f"example_trial_epoch{epoch:03d}.png"),
@@ -298,6 +310,7 @@ def main():
             sample_idx=0,
             title="Example trial logits"
         )
+
         viz.save_weight_hists_W_hh(
             model.W_hh, model.sign_vec,
             str(outdir / f"weights_hist_epoch{epoch:03d}.png")
