@@ -54,8 +54,8 @@ def evaluate_task(model, ds, device, mask_thresh, batches=50, input_noise_std=0.
     acc_all = acc_dec = 0.0; n_dec = 0
     for _ in range(batches):
         X, Y = ds()
-        X = torch.from_numpy(X).float().to(device)
-        Y = torch.from_numpy(Y).long().to(device)
+        X = X.float()
+        Y = Y.long()
         dec_mask = decision_mask_from_inputs(X, thresh=mask_thresh)
         X_in = X if input_noise_std == 0 else X + torch.normal(0.0, input_noise_std, size=X.shape, device=X.device)
         logits = model(X_in)
