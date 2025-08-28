@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Tuple, Optional, Iterator
 import math
 import numpy as np
+import torch
 
 from src.data import mod_cog_tasks as mct
 from neurogym import Dataset as NGDataset
@@ -44,13 +45,18 @@ class CachedDataset:
             yield self.X[take], self.Y[take]
 
 class CachedBatcher:
-    def __init__(self, cached_ds, batch_size, rng=None):
-        import numpy as np
+    def __init__(self, cached_ds, batch_size, device='cpu', rng=None):
         self.ds = cached_ds
         self.bs = int(batch_size)
+        self.device = torch.device(device)
         self.rng = rng or np.random.default_rng()
+
     def __call__(self):
-        return self.ds.sample_batch(self.bs, self.rng)
+        x, y = self.ds.sample_batch(self.bs, self.rng)
+        return (
+            torch.from_numpy(x).float().to(self.device, non_blocking=True),
+            torch.from_numpy(y).long().to(self.device, non_blocking=True),
+        )
 
 def build_cached_dataset(task_name: str,
                          num_batches: int,

@@ -68,7 +68,7 @@ def evaluate_task(model, ds, device, mask_thresh, batches=50, input_noise_std=0.
     return {"loss": tot_l/batches, "loss_fix": tot_fix/batches, "loss_dec": tot_dec/batches,
             "acc": acc_all/batches, "acc_dec": acc_dec/max(1,n_dec)}
 
-def build_task_datasets(task_names, batch_size, seq_len, data_cfg):
+def build_task_datasets(task_names, batch_size, seq_len, data_cfg, device=None):
     source = (data_cfg.get("source", "online")).lower()
     out = {}
 
@@ -93,7 +93,8 @@ def build_task_datasets(task_names, batch_size, seq_len, data_cfg):
     seed    = cache_cfg.get("seed", None)
     build   = bool(cache_cfg.get("build_if_missing", True))
     paths   = cache_cfg.get("paths", {}) or {}
-
+    
+    device_str = device if device is not None else 'cpu'
     for t in task_names:
         p = paths.get(t, f"runs/cache/{t}_{nb}x{batch_size}x{seq_len}.npz")
         p = str(Path(p))
@@ -111,8 +112,8 @@ def build_task_datasets(task_names, batch_size, seq_len, data_cfg):
         action_n = env.action_space.n
         input_dim = env.observation_space.shape[-1]
 
-        tr = CachedBatcher(tr_cached, batch_size)
-        va = CachedBatcher(va_cached, batch_size)
+        tr = CachedBatcher(tr_cached, batch_size, device=device_str)
+        va = CachedBatcher(va_cached, batch_size, device=device_str)
         out[t] = (tr, va, int(action_n), int(input_dim))
 
     return out
@@ -176,7 +177,7 @@ def main():
     label_smoothing = float(train.get("label_smoothing", 0.1))
 
     # data per task
-    dsets = build_task_datasets(tasks, batch_sz, seq_len, data_cfg)
+    dsets = build_task_datasets(tasks, batch_sz, seq_len, data_cfg, device=device.type)
     action_dims = {t: dsets[t][2] for t in tasks}
     input_dims  = {t: dsets[t][3] for t in tasks}
     if len(set(action_dims.values())) != 1:
@@ -236,8 +237,6 @@ def main():
             train_ds = dsets[task][0]
 
             X, Y = train_ds()
-            X = torch.from_numpy(X).float().to(device)
-            Y = torch.from_numpy(Y).long().to(device)
 
             dec_mask = decision_mask_from_inputs(X, thresh=mask_thr)
             X_in = X if noise == 0 else X + torch.normal(0.0, noise, size=X.shape, device=X.device)

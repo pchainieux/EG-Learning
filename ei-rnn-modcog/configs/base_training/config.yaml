@@ -5,17 +5,17 @@ outdir: outputs/exp_singlehead_gd_correct/          # create new folder if I wan
 tasks: ["dm1"]                # e.g., ["dm1", "dms"]
 
 data:
-  source: online             # "online", "cached"
-  batch_size: 128
-  seq_len: 350
+  source: cached             # "online", "cached"
+  batch_size: 512
+  seq_len: 20
 
   cache:
-    num_batches: 200
+    num_batches: 2000
     val_frac: 0.1
     build_if_missing: true 
     seed: 7
     #paths:                 
-    #  dm1: experiments/cache/dm1_200x128x350.npz
+    #  dm1: outputs/cache/dm1_2000x128x350.npz
 
 model:
   hidden_size: 256
@@ -41,10 +41,10 @@ optim:
 train:
   num_epochs: 10
   steps_per_epoch: 500        # minibatches (online draw) per epoch
-  val_batches: 50             # per task validation batches at epoch end
+  val_batches: 10             # per task validation batches at epoch end
   grad_clip: 1.0
   input_noise_std: 0.0
-  fixdown_weight: 0.5
+  fixdown_weight: 0.1
   spectral_renorm_every: 0
   mask_threshold: 0.5
   task_sampling: round_robin  # 'round_robin', 'random'
