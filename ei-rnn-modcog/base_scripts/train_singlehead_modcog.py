@@ -6,20 +6,23 @@ import torch
 import torch.nn as nn
 
 from src.data import mod_cog_tasks as mct
-from neurogym import Dataset 
+from neurogym import Dataset
 from src.analysis import viz_training as viz
 from src.models.ei_rnn import EIRNN, EIConfig
 from src.optim.sgd_eg import SGD_EG
 from src.utils.seeding import set_seed_all, pick_device, device_name
+
 
 def ensure_tensor(x, dtype, device):
     if isinstance(x, np.ndarray):
         return torch.from_numpy(x).to(device=device, dtype=dtype)
     return x.to(device=device, dtype=dtype)
 
+
 @torch.no_grad()
 def decision_mask_from_inputs(X: torch.Tensor, thresh: float = 0.5) -> torch.Tensor:
     return (X[..., 0] < thresh)
+
 
 class ModCogLossCombined(nn.Module):
     def __init__(self, label_smoothing: float = 0.1, fixdown_weight: float = 0.05):
@@ -27,29 +30,35 @@ class ModCogLossCombined(nn.Module):
         self.mse = nn.MSELoss()
         self.ce  = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
         self.fixdown_weight = float(fixdown_weight)
+
     def forward(self, outputs, labels, dec_mask):
         B, T, C = outputs.shape
         target_fix = outputs.new_zeros(B, T, C); target_fix[..., 0] = 1.0
-        loss_fix = self.mse(outputs[~dec_mask], target_fix[~dec_mask]) if (~dec_mask).any() else outputs.sum()*0.0
+
+        loss_fix = self.mse(outputs[~dec_mask], target_fix[~dec_mask]) if (~dec_mask).any() else outputs.sum() * 0.0
+
         if dec_mask.any():
             loss_dec = self.ce(outputs[dec_mask], 1 + labels[dec_mask])
             fix_logits_dec = outputs[..., 0][dec_mask]
             loss_fixdown = (fix_logits_dec ** 2).mean() * self.fixdown_weight
         else:
-            loss_dec = outputs.sum()*0.0
-            loss_fixdown = outputs.sum()*0.0
+            loss_dec = outputs.sum() * 0.0
+            loss_fixdown = outputs.sum() * 0.0
+
         return loss_fix + loss_dec + loss_fixdown, loss_fix.detach(), (loss_dec + loss_fixdown).detach()
+
 
 @torch.no_grad()
 def accuracy_with_fixation(outputs, labels, dec_mask):
     pred = outputs.argmax(dim=-1)
     labels_shifted = outputs.new_zeros(labels.shape, dtype=torch.long)
-    labels_shifted.copy_(labels + 1)  
+    labels_shifted.copy_(labels + 1)
     labels_full = labels_shifted.clone()
     labels_full[~dec_mask] = 0
     acc_all = (pred == labels_full).float().mean().item()
     acc_dec = (pred[dec_mask] == labels_full[dec_mask]).float().mean().item() if dec_mask.any() else float("nan")
     return acc_all, acc_dec
+
 
 @torch.no_grad()
 def evaluate_task(model, ds, device, mask_thresh, batches=50, input_noise_std=0.0):
@@ -65,14 +74,19 @@ def evaluate_task(model, ds, device, mask_thresh, batches=50, input_noise_std=0.
         dec_mask = decision_mask_from_inputs(X, thresh=mask_thresh)
         X_in = X if input_noise_std == 0 else X + torch.normal(0.0, input_noise_std, size=X.shape, device=X.device)
         logits = model(X_in)
+
         l, lf, ld = crit(logits, Y, dec_mask)
         tot_l += l.item(); tot_fix += lf.item(); tot_dec += ld.item()
+
         a_all, a_dec = accuracy_with_fixation(logits, Y, dec_mask)
         acc_all += a_all
-        if not math.isnan(a_dec): acc_dec += a_dec; n_dec += 1
+        if not math.isnan(a_dec):
+            acc_dec += a_dec
+            n_dec += 1
     model.train()
     return {"loss": tot_l/batches, "loss_fix": tot_fix/batches, "loss_dec": tot_dec/batches,
-            "acc": acc_all/batches, "acc_dec": acc_dec/max(1,n_dec)}
+            "acc": acc_all/batches, "acc_dec": acc_dec/max(1, n_dec)}
+
 
 def build_task_datasets(task_names, batch_size, seq_len, data_cfg, device=None):
     source = (data_cfg.get("source", "online")).lower()
@@ -99,7 +113,7 @@ def build_task_datasets(task_names, batch_size, seq_len, data_cfg, device=None):
     seed    = cache_cfg.get("seed", None)
     build   = bool(cache_cfg.get("build_if_missing", True))
     paths   = cache_cfg.get("paths", {}) or {}
-    
+
     device_str = device if device is not None else 'cpu'
     for t in task_names:
         p = paths.get(t, f"runs/cache/{t}_{nb}x{batch_size}x{seq_len}.npz")
@@ -113,6 +127,7 @@ def build_task_datasets(task_names, batch_size, seq_len, data_cfg, device=None):
             cached, action_n = build_cached_dataset(t, nb, batch_size, seq_len, seed=seed)
             save_cached_npz(p, cached, meta={"task": t, "seq_len": seq_len})
         tr_cached, va_cached = split_cached(cached, val_frac=vfrac, seed=seed)
+
         from neurogym import Dataset as NGDataset
         env = getattr(mct, t)()
         action_n = env.action_space.n
@@ -126,9 +141,12 @@ def build_task_datasets(task_names, batch_size, seq_len, data_cfg, device=None):
 
 
 def choose_task(tasks, i_step, mode, weights):
-    if mode == "round_robin": return tasks[i_step % len(tasks)]
-    if not weights or len(weights) != len(tasks): return random.choice(tasks)
+    if mode == "round_robin":
+        return tasks[i_step % len(tasks)]
+    if not weights or len(weights) != len(tasks):
+        return random.choice(tasks)
     return random.choices(tasks, weights=weights, k=1)[0]
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -137,6 +155,7 @@ def main():
     cfg = yaml.safe_load(open(args.config, "r"))
     data_cfg  = cfg.get("data", {})
 
+    # seeding & device
     seed      = int(cfg.get("seed", 7))
     set_seed_all(seed, deterministic=False)
 
@@ -144,32 +163,38 @@ def main():
     device    = pick_device(dev_str)
     print(f"Using device: {device_name(device)}")
 
+    # output & tasks
     outdir    = Path(cfg.get("outdir", "runs/exp")); outdir.mkdir(parents=True, exist_ok=True)
     tasks     = cfg.get("tasks", ["dm1"]); tasks = [tasks] if isinstance(tasks, str) else tasks
 
+    # configs
     data      = cfg.get("data", {})
     model_cfg = cfg.get("model", {})
     optim     = cfg.get("optim", {})
     train     = cfg.get("train", {})
+    viz_cfg   = cfg.get("viz", {}) or {}
 
+    # data params
     seq_len   = int(data.get("seq_len", 350))
     batch_sz  = int(data.get("batch_size", 128))
 
+    # model params
     hidden    = int(model_cfg.get("hidden_size", 256))
     exc_frac  = float(model_cfg.get("exc_frac", 0.8))
     spectral_radius = float(model_cfg.get("spectral_radius", 1.2))
     input_scale     = float(model_cfg.get("input_scale", 1.0))
-
     leak       = float(model_cfg.get("leak", 0.2))                    # α in (0,1]
     nonlin     = (model_cfg.get("nonlinearity", "softplus")).lower()  # "softplus" | "tanh"
     readout    = (model_cfg.get("readout", "e_only")).lower()         # "e_only" | "all"
 
+    # optim params
     algo      = (optim.get("algorithm", "eg")).lower()
     eg        = optim.get("eg", {});  gd = optim.get("gd", {})
     lr_eg     = float(eg.get("lr", 1.5)); mom_eg = float(eg.get("momentum", 0.0))
     wd_eg     = float(eg.get("weight_decay", 1e-5)); minmag = float(eg.get("min_magnitude", 1e-6))
     lr_gd     = float(gd.get("lr", 0.01)); mom_gd = float(gd.get("momentum", 0.9)); wd_gd = float(gd.get("weight_decay", 1e-5))
 
+    # train params
     E         = int(train.get("num_epochs", 20))
     S         = int(train.get("steps_per_epoch", 500))
     V         = int(train.get("val_batches", 50))
@@ -181,6 +206,11 @@ def main():
     sampling  = train.get("task_sampling", "round_robin")
     weights   = train.get("task_weights", []) or []
     label_smoothing = float(train.get("label_smoothing", 0.1))
+
+    # viz params (new)
+    plot_every_steps = int(viz_cfg.get("plot_every_steps", 50))   # cadence to save step-wise curves
+    ema_beta         = float(viz_cfg.get("ema_beta", 0.98))       # EMA smoothing
+    shade_window     = int(viz_cfg.get("shade_window", 101))      # band width on loss
 
     # data per task
     dsets = build_task_datasets(tasks, batch_sz, seq_len, data_cfg, device=device.type)
@@ -228,9 +258,15 @@ def main():
 
     crit = ModCogLossCombined(label_smoothing=label_smoothing, fixdown_weight=fixdown)
 
-    # histories for viz
+    # histories
     epoch_train_losses: list[float] = []
     acc_history: dict[str, list[float]] = {t: [] for t in tasks}
+
+    # NEW: per-step histories (dense)
+    step_idx: list[int] = []
+    train_loss_steps: list[float] = []
+    train_acc_steps: list[float] = []
+    train_acc_dec_steps: list[float] = []
 
     # training
     global_step = 0
@@ -246,7 +282,6 @@ def main():
             X = ensure_tensor(X, torch.float32, device)
             Y = ensure_tensor(Y, torch.long,    device)
 
-                
             dec_mask = decision_mask_from_inputs(X, thresh=mask_thr)
             X_in = X if noise == 0 else X + torch.normal(0.0, noise, size=X.shape, device=X.device)
 
@@ -266,26 +301,85 @@ def main():
             meter["acc"]  += acc_all
             meter["acc_dec"] += (0.0 if math.isnan(acc_dec) else acc_dec)
 
+            # --- per-step logging & live plotting ---
+            train_loss_steps.append(float(loss.item()))
+            train_acc_steps.append(float(acc_all))
+            train_acc_dec_steps.append(0.0 if math.isnan(acc_dec) else float(acc_dec))
+            step_idx.append(global_step)
+
+            if plot_every_steps and (global_step % plot_every_steps == 0):
+                viz.save_training_curve(
+                    y_raw=train_loss_steps,
+                    x=step_idx,
+                    outprefix=str(outdir / "loss_train_step"),
+                    xlabel="training steps",
+                    ylabel="loss",
+                    title=None,
+                    smooth={"ema": ema_beta},
+                    shade_window=shade_window,
+                )
+                viz.save_training_curve(
+                    y_raw=train_acc_steps,
+                    x=step_idx,
+                    outprefix=str(outdir / "acc_train_step"),
+                    xlabel="training steps",
+                    ylabel="accuracy",
+                    title=None,
+                    smooth={"ema": ema_beta},
+                    shade_window=0,
+                )
+                viz.save_training_curve(
+                    y_raw=train_acc_dec_steps,
+                    x=step_idx,
+                    outprefix=str(outdir / "acc_dec_train_step"),
+                    xlabel="training steps",
+                    ylabel="decision accuracy",
+                    title=None,
+                    smooth={"ema": ema_beta},
+                    shade_window=0,
+                )
+
             global_step += 1
 
         # epoch summary
-        for k in meter: meter[k] /= S
+        for k in meter:
+            meter[k] /= S
         epoch_train_losses.append(meter["loss"])
         print(f"[epoch {epoch:03d}] train: loss {meter['loss']:.3f} | acc {meter['acc']*100:5.1f}% "
               f"| dec {meter['acc_dec']*100:5.1f}% | {(time.time()-t0):.2f}s")
 
-        # validation per task + viz updates
+        # validation per task + viz updates (epoch-level)
         for t in tasks:
             val = evaluate_task(model, dsets[t][1], device, mask_thr, batches=V, input_noise_std=noise)
             acc_history[t].append(val["acc"])
             print(f"  [val:{t}] loss {val['loss']:.3f} | acc {val['acc']*100:5.1f}% | dec {val['acc_dec']*100:5.1f}%")
 
-        # safe smoothing for tiny histories (no smoothing until >=3 points)
-        sm = 0 if len(epoch_train_losses) < 3 else 1
-        viz.save_loss_curve(epoch_train_losses, str(outdir / "loss.png"), smooth=sm)
-        viz.save_per_task_accuracy_curves(acc_history, str(outdir / "acc_tasks.png"), smooth=sm)
+        # thesis-grade epoch curves (smoothed & vector export)
+        viz.save_training_curve(
+            y_raw=epoch_train_losses,
+            x=np.arange(1, len(epoch_train_losses) + 1),
+            outprefix=str(outdir / "loss_epoch"),
+            xlabel="epoch",
+            ylabel="loss (epoch mean)",
+            title="Training loss (per-epoch)",
+            smooth={"window": max(3, len(epoch_train_losses) // 5)},
+            shade_window=0,
+        )
+        # multitask accuracy curves (per-epoch)
+        if len(tasks) > 0:
+            epochs_x = np.arange(1, len(acc_history[tasks[0]]) + 1)
+            viz.save_multitask_curves(
+                curves=acc_history,
+                x=epochs_x,
+                outprefix=str(outdir / "acc_val_per_task"),
+                xlabel="epoch",
+                ylabel="accuracy",
+                title="Validation accuracy (per task, per-epoch)",
+                smooth={"window": max(3, len(epochs_x) // 5)},
+            )
 
-        Xv, Yv = dsets[tasks[0]][1]()  
+        # improved trial overview figure
+        Xv, Yv = dsets[tasks[0]][1]()
         Xv_t = ensure_tensor(Xv, torch.float32, device)
         dec_mask_v = decision_mask_from_inputs(Xv_t, thresh=mask_thr)
         with torch.no_grad():
@@ -296,14 +390,15 @@ def main():
             logits=logits_v.detach(),
             outpath=str(outdir / f"trial_overview_epoch{epoch:03d}.png"),
             dec_mask=dec_mask_v,
-            obs_name=None,
+            obs_name=None,     # pass env.observation_space.name if available
             sample_idx=0,
             topk_logits=3,
             title="Example trial",
         )
 
+        # (optional) keep the legacy logits trace for comparison
         viz.save_logits_time_trace(
-            logits_v.detach(),  
+            logits_v.detach(),
             str(outdir / f"example_trial_epoch{epoch:03d}.png"),
             dec_mask=dec_mask_v,
             topk=3,
@@ -311,15 +406,18 @@ def main():
             title="Example trial logits"
         )
 
+        # EI weight diagnostics
         viz.save_weight_hists_W_hh(
             model.W_hh, model.sign_vec,
             str(outdir / f"weights_hist_epoch{epoch:03d}.png")
         )
 
+        # checkpoint
         ckpt = outdir / f"singlehead_epoch{epoch:03d}.pt"
         torch.save({"model": model.state_dict(), "config": cfg, "epoch": epoch}, ckpt)
 
     print(f"Done. Last checkpoint: {ckpt}")
+
 
 if __name__ == "__main__":
     main()

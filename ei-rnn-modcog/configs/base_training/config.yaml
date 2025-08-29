@@ -5,17 +5,17 @@ outdir: outputs/exp_singlehead_eg/          # create new folder if I want to sav
 tasks: ["dm1"]                # e.g., ["dm1", "dms"]
 
 data:
-  source: cached             # "online", "cached"
-  batch_size: 512
+  source: online             # "online", "cached"
+  batch_size: 256
   seq_len: 350
 
   cache:
-    num_batches: 2000
+    num_batches: 128
     val_frac: 0.1
     build_if_missing: true 
     seed: 7
-    paths:                 
-      dm1: outputs/cache/dm1_2000x128x350.npz
+    #paths:                 
+    #  dm1: outputs/cache/dm1_2000x128x350.npz
 
 model:
   hidden_size: 256
@@ -29,7 +29,7 @@ model:
 optim:
   algorithm: eg               # 'eg' (EG on W_hh + GD on others), 'gd' (GD everywhere)
   eg:
-    lr: 0.5
+    lr: 0.1
     momentum: 0.0
     weight_decay: 1e-5
     min_magnitude: 1e-6
@@ -39,7 +39,7 @@ optim:
     weight_decay: 1e-5
 
 train:
-  num_epochs: 20
+  num_epochs: 10
   steps_per_epoch: 500        # minibatches (online draw) per epoch
   val_batches: 10             # per task validation batches at epoch end
   grad_clip: 1.0

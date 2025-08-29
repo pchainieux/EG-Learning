@@ -13,6 +13,11 @@ from src.models.ei_rnn import EIRNN, EIConfig
 from src.optim.sgd_eg import SGD_EG
 from src.utils.seeding import set_seed_all, pick_device, device_name
 
+def ensure_tensor(x, dtype, device):
+    if isinstance(x, np.ndarray):
+        return torch.from_numpy(x).to(device=device, dtype=dtype)
+    return x.to(device=device, dtype=dtype)
+
 @torch.no_grad()
 def decision_mask_from_inputs(X: torch.Tensor, thresh: float = 0.5) -> torch.Tensor:
     return (X[..., 0] < thresh)
@@ -55,8 +60,8 @@ def evaluate_task(core, heads, task, ds, device, mask_thresh, batches=50, input_
     acc_all = acc_dec = 0.0; n_dec = 0
     for _ in range(batches):
         X, Y = ds()
-        X = torch.from_numpy(X).float().to(device)
-        Y = torch.from_numpy(Y).long().to(device)
+        X = ensure_tensor(X, torch.float32, device)
+        Y = ensure_tensor(Y, torch.long,    device)
         dec_mask = decision_mask_from_inputs(X, thresh=mask_thresh)
         X_in = X if input_noise_std == 0 else X + torch.normal(0.0, input_noise_std, size=X.shape, device=X.device)
         Hseq = run_core_hidden(core, X_in)
@@ -239,8 +244,8 @@ def main():
             train_ds = dsets[task][0]
 
             X, Y = train_ds()
-            X = torch.from_numpy(X).float().to(device)
-            Y = torch.from_numpy(Y).long().to(device)
+            X = ensure_tensor(X, torch.float32, device)
+            Y = ensure_tensor(Y, torch.long,    device)
 
             dec_mask = decision_mask_from_inputs(X, thresh=mask_thr)
             X_in = X if noise == 0 else X + torch.normal(0.0, noise, size=X.shape, device=X.device)

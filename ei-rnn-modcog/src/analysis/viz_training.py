@@ -100,44 +100,31 @@ def _infer_stim_layout(input_dim: int, obs_name: dict | None) -> tuple[int, int]
 
 
 def save_task_trial_overview(
-    X: ArrayLike,                # (B, T, D) or (T, D)
-    logits: ArrayLike,           # (B, T, C) or (T, C)
+    X: ArrayLike,
+    logits: ArrayLike,
     outpath: str,
     *,
-    dec_mask: ArrayLike | None = None,   # (B, T) or (T,)
-    obs_name: dict | None = None,        # env.observation_space.name if available
+    dec_mask: ArrayLike | None = None,
+    obs_name: dict | None = None,
     sample_idx: int = 0,
     topk_logits: int = 3,
     title: str | None = None,
     cmap_stim: str = "Blues",
 ):
-    """
-    Create a multi-panel figure with aligned time axis:
-      (1) fixation input (line),
-      (2) one heatmap per input modality showing the stimulus ring over time,
-      (3) network outputs: fixation logit and top-k varying choice logits.
-
-    Saved to `outpath`.
-
-    Notes:
-      - We infer the number of modalities and ring size from `obs_name` when
-        provided; otherwise from the input dimensionality.
-      - Decision periods (where dec_mask==True) are shown as light vertical spans.
-    """
     _ensure_dir(outpath)
 
     X = _to_numpy(X)
     L = _to_numpy(logits)
-    if X.ndim == 2:      # (T, D) -> add batch dim
+    if X.ndim == 2:
         X = X[None, ...]
-    if L.ndim == 2:      # (T, C) -> add batch dim
+    if L.ndim == 2:
         L = L[None, ...]
     B, T, D = X.shape
     _, _, C = L.shape
 
     b = min(sample_idx, B - 1)
-    Xb = X[b]                    # (T, D)
-    Lb = L[b]                    # (T, C)
+    Xb = X[b]
+    Lb = L[b]
 
     # Decision mask handling
     M = None
@@ -150,27 +137,27 @@ def save_task_trial_overview(
     else:
         spans = []
 
-    # Figure layout: 1 (fixation) + n_modalities (stim heatmaps) + 1 (logits)
     ring_dim, n_mod = _infer_stim_layout(D, obs_name)
     n_rows = 2 + n_mod  # fixation + modalities + outputs
-
-    import matplotlib.pyplot as plt
-    from matplotlib import gridspec
-
-    plt.rcParams.update({
-        "font.size": 11,
-        "axes.labelsize": 11,
-        "axes.titlesize": 12,
-        "xtick.labelsize": 10,
-        "ytick.labelsize": 10,
-        "legend.fontsize": 10,
-    })
-
-    fig = plt.figure(figsize=(10.0, 6.0 + 1.5 * max(0, n_mod - 1)))
-    gs = gridspec.GridSpec(n_rows, 1, height_ratios=[1] + [2]*n_mod + [2.5], hspace=0.28)
     time = np.arange(T)
 
-    # (1) Fixation input (assumed channel 0)
+    import matplotlib.pyplot as plt
+
+    plt.rcParams.update({
+        "font.size": 11, "axes.labelsize": 11, "axes.titlesize": 12,
+        "xtick.labelsize": 10, "ytick.labelsize": 10, "legend.fontsize": 10,
+    })
+
+    # ---- Use constrained layout; do NOT call tight_layout() later ----
+    figsize = (10.0, 6.0 + 1.5 * max(0, n_mod - 1))
+    try:
+        fig = plt.figure(figsize=figsize, layout="constrained")  # mpl >= 3.6
+    except TypeError:
+        fig = plt.figure(figsize=figsize, constrained_layout=True)  # older mpl
+
+    gs = fig.add_gridspec(n_rows, 1, height_ratios=[1] + [2]*n_mod + [2.5])
+
+    # (1) Fixation input
     ax_fix = fig.add_subplot(gs[0, 0])
     ax_fix.plot(time, Xb[:, 0], lw=1.8)
     ax_fix.set_ylabel("Fixation\ninput")
@@ -180,40 +167,33 @@ def save_task_trial_overview(
         ax_fix.axvspan(s0, s1, color="0.85", alpha=0.6, lw=0)
     ax_fix.grid(alpha=0.2, linestyle=":")
 
-    # (2) Stimulus heatmap(s) by modality
-    # Channels:  [0]=fix | [1:1+ring_dim]=mod0 | [1+ring_dim:1+2*ring_dim]=mod1 | ...
+    # (2) Stimulus heatmap(s)
     for m in range(n_mod):
         start = 1 + m * ring_dim
         stop  = start + ring_dim
         stim_block = Xb[:, start:stop]    # (T, ring_dim)
         ax_stim = fig.add_subplot(gs[1 + m, 0], sharex=ax_fix)
         im = ax_stim.imshow(
-            stim_block.T,
-            aspect="auto",
-            origin="lower",
-            interpolation="nearest",
-            extent=[0, T - 1, 0, ring_dim],
-            cmap=cmap_stim,
+            stim_block.T, aspect="auto", origin="lower", interpolation="nearest",
+            extent=[0, T - 1, 0, ring_dim], cmap=cmap_stim,
         )
         ax_stim.set_ylabel(f"Input\nmodality {m+1}")
         for s0, s1 in spans:
             ax_stim.axvspan(s0, s1, color="0.85", alpha=0.5, lw=0)
-        # Optional angle ticks
         tick_vals = [0, ring_dim//2, ring_dim-1]
         ax_stim.set_yticks(tick_vals)
         ax_stim.set_yticklabels([r"$0^\circ$", r"$180^\circ$", r"$360^\circ$"])
-        # Thin colorbar on the right
-        cbar = plt.colorbar(im, ax=ax_stim, fraction=0.046, pad=0.02)
+        # Use fig.colorbar so constrained layout knows about it
+        cbar = fig.colorbar(im, ax=ax_stim, fraction=0.046, pad=0.02)
         cbar.ax.tick_params(labelsize=8)
 
-    # (3) Network outputs (fixation + top-k choices by temporal variance)
+    # (3) Network outputs
     ax_out = fig.add_subplot(gs[-1, 0], sharex=ax_fix)
-    # Fixation logit is class 0 by convention
     ax_out.plot(time, Lb[:, 0], lw=1.8, label="fixation logit (0)")
 
     if C > 1:
-        choices = Lb[:, 1:]            # (T, C-1)
-        energy  = choices.var(axis=0)  # variance per class over time
+        choices = Lb[:, 1:]
+        energy  = choices.var(axis=0)
         k = min(topk_logits, choices.shape[1])
         top_idx = np.argsort(energy)[-k:]
         for j in top_idx:
@@ -230,10 +210,10 @@ def save_task_trial_overview(
     ax_out.legend(loc="upper right", frameon=False, ncol=1)
     ax_out.grid(alpha=0.2, linestyle=":")
 
-    # Tight layout and save
-    plt.tight_layout()
-    plt.savefig(outpath, dpi=200, bbox_inches="tight")
+    # No tight_layout() here
+    fig.savefig(outpath, dpi=200, bbox_inches="tight")
     plt.close(fig)
+
 
 def save_per_task_accuracy_curves(per_task_acc, outpath, smooth=0, xlabel="Epoch", ylabel="Accuracy",
                                   title="Per-task validation accuracy", legend_loc="best"):
