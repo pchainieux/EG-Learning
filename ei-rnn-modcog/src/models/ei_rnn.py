@@ -59,6 +59,14 @@ class EIRNN(nn.Module):
         else:
             return torch.tanh(x) 
 
+    @torch.jit.ignore
+    def _step(self, h, xw_t):
+        pre = xw_t + torch.nn.functional.linear(h, self.W_hh, self.b_h)
+        h = (1.0 - self._alpha) * h + self._alpha * self._phi(pre)
+        h_ro = h * self.e_mask if self._readout_mode == "e_only" else h
+        y = self.W_out(h_ro)
+    return h, y
+
     def reset_parameters(self):
         H = self.cfg.hidden_size
         nn.init.kaiming_uniform_(self.W_xh, a=0.0)
@@ -84,30 +92,24 @@ class EIRNN(nn.Module):
         self.W_hh.copy_(self.W_hh.abs() * self.sign_vec)
 
     @torch.no_grad()
-    def rescale_spectral_radius_(self, target=None):
-        target = float(self.cfg.spectral_radius if target is None else target)
-        U, S, Vh = torch.linalg.svd(self.W_hh, full_matrices=False)
+    def rescale_spectral_radius_(self, tol=0.10):
+        target = float(self.cfg.spectral_radius)
+        _, S, _ = torch.linalg.svd(self.W_hh, full_matrices=False)
         max_s = S.max().clamp_min(1e-6)
-        self.W_hh.mul_(target / max_s)
+        if not ( (1.0 - tol) * target <= max_s <= (1.0 + tol) * target ):
+            self.W_hh.mul_(target / max_s)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, _ = x.shape
         H = self.cfg.hidden_size
+
+        xw = torch.nn.functional.linear(x, self.W_xh, bias=None)
+
         h = x.new_zeros(B, H)
         out = x.new_zeros(B, T, self.W_out.out_features)
 
-        Wx = self.W_xh
-        Wh = self.W_hh
-        b  = self.b_h
-        alpha = self._alpha
-
         for t in range(T):
-            pre = x[:, t, :] @ Wx.T + h @ Wh.T + b
-            h = (1.0 - alpha) * h + alpha * self._phi(pre)
+            h, y_t = self._step(h, xw[:, t, :])
+            out[:, t, :] = y_t
 
-            if self._readout_mode == "e_only":
-                h_ro = h * self.e_mask
-            else:
-                h_ro = h
-            out[:, t, :] = self.W_out(h_ro)
         return out

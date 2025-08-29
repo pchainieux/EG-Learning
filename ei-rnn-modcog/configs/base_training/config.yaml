@@ -1,11 +1,11 @@
 seed: 1
 device: auto                  # 'auto', 'cpu', 'cuda'
-outdir: outputs/exp_singlehead_eg/          # create new folder if I want to save a specific experiment results
+outdir: outputs/exp_singlehead_eg_test_1/          # create new folder if I want to save a specific experiment results
 
 tasks: ["dm1"]                # e.g., ["dm1", "dms"]
 
 data:
-  source: online             # "online", "cached"
+  source: cached             # "online", "cached"
   batch_size: 256
   seq_len: 350
 
@@ -14,13 +14,13 @@ data:
     val_frac: 0.1
     build_if_missing: true 
     seed: 7
-    #paths:                 
-    #  dm1: outputs/cache/dm1_2000x128x350.npz
+    paths:                 
+      dm1: outputs/cache/dm1.npz
 
 model:
   hidden_size: 256
   exc_frac: 0.8
-  spectral_radius: 1.2
+  spectral_radius: 1
   input_scale: 1.0
   leak: 0.2               # (0,1]
   nonlinearity: softplus  # softplus | tanh
@@ -45,7 +45,7 @@ train:
   grad_clip: 1.0
   input_noise_std: 0.0
   fixdown_weight: 0.5
-  spectral_renorm_every: 0
+  spectral_renorm_every: 200
   mask_threshold: 0.5
   task_sampling: round_robin  # 'round_robin', 'random'
   task_weights: []            # used when task_sampling == 'random'; [] => uniform

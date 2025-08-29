@@ -11,53 +11,14 @@ from src.analysis import viz_training as viz
 from src.models.ei_rnn import EIRNN, EIConfig
 from src.optim.sgd_eg import SGD_EG
 from src.utils.seeding import set_seed_all, pick_device, device_name
+from src.training.losses import ModCogLossCombined, decision_mask_from_inputs
+from src.training.metrics import accuracy_with_fixation
 
 
 def ensure_tensor(x, dtype, device):
     if isinstance(x, np.ndarray):
         return torch.from_numpy(x).to(device=device, dtype=dtype)
     return x.to(device=device, dtype=dtype)
-
-
-@torch.no_grad()
-def decision_mask_from_inputs(X: torch.Tensor, thresh: float = 0.5) -> torch.Tensor:
-    return (X[..., 0] < thresh)
-
-
-class ModCogLossCombined(nn.Module):
-    def __init__(self, label_smoothing: float = 0.1, fixdown_weight: float = 0.05):
-        super().__init__()
-        self.mse = nn.MSELoss()
-        self.ce  = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
-        self.fixdown_weight = float(fixdown_weight)
-
-    def forward(self, outputs, labels, dec_mask):
-        B, T, C = outputs.shape
-        target_fix = outputs.new_zeros(B, T, C); target_fix[..., 0] = 1.0
-
-        loss_fix = self.mse(outputs[~dec_mask], target_fix[~dec_mask]) if (~dec_mask).any() else outputs.sum() * 0.0
-
-        if dec_mask.any():
-            loss_dec = self.ce(outputs[dec_mask], 1 + labels[dec_mask])
-            fix_logits_dec = outputs[..., 0][dec_mask]
-            loss_fixdown = (fix_logits_dec ** 2).mean() * self.fixdown_weight
-        else:
-            loss_dec = outputs.sum() * 0.0
-            loss_fixdown = outputs.sum() * 0.0
-
-        return loss_fix + loss_dec + loss_fixdown, loss_fix.detach(), (loss_dec + loss_fixdown).detach()
-
-
-@torch.no_grad()
-def accuracy_with_fixation(outputs, labels, dec_mask):
-    pred = outputs.argmax(dim=-1)
-    labels_shifted = outputs.new_zeros(labels.shape, dtype=torch.long)
-    labels_shifted.copy_(labels + 1)
-    labels_full = labels_shifted.clone()
-    labels_full[~dec_mask] = 0
-    acc_all = (pred == labels_full).float().mean().item()
-    acc_dec = (pred[dec_mask] == labels_full[dec_mask]).float().mean().item() if dec_mask.any() else float("nan")
-    return acc_all, acc_dec
 
 
 @torch.no_grad()
@@ -291,10 +252,11 @@ def main():
             opt.zero_grad(set_to_none=True); loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             opt.step()
-            model.project_EI_()
+            if algo == "gd":
+                model.project_EI_()
 
             if renorm_every and (global_step % renorm_every == 0) and global_step > 0:
-                model.rescale_spectral_radius_()
+                model.rescale_spectral_radius_(tol=0.10)
 
             acc_all, acc_dec = accuracy_with_fixation(logits, Y, dec_mask)
             meter["loss"] += loss.item()
