@@ -65,7 +65,7 @@ class EIRNN(nn.Module):
         h = (1.0 - self._alpha) * h + self._alpha * self._phi(pre)
         h_ro = h * self.e_mask if self._readout_mode == "e_only" else h
         y = self.W_out(h_ro)
-    return h, y
+        return h, y
 
     def reset_parameters(self):
         H = self.cfg.hidden_size
