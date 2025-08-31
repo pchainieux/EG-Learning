@@ -5,7 +5,7 @@ from pathlib import Path
 from src.models.ei_rnn import EIRNN, EIConfig
 from src.analysis import inspect_weights as iw
 
-ckpt_path = Path("experiments/multihead_epoch015.pt")
+ckpt_path = Path("outputs/exp_singlehead_eg_done/singlehead_epoch020.pt")
 ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 
 cfg = ckpt["config"]
@@ -20,7 +20,7 @@ core = EIRNN(input_dim, output_size=max(ckpt["head_dims"].values()),
                           spectral_radius=spectral_radius, input_scale=input_scale))
 core.load_state_dict(ckpt["core"], strict=False)
 
-outdir = Path("experiments/inspect_from_ckpt/")
+outdir = Path("outputs/inspect_from_ckpt_done/")
 iw.save_weight_hist_by_group(core.W_hh, core.sign_vec, str(outdir / "weights_hist_from_ckpt.png"))
 iw.save_row_col_sums(core.W_hh, str(outdir / "rowcol_sums_from_ckpt.png"))
 iw.save_gram_spectrum(core.W_hh, str(outdir / "spectrum_from_ckpt.png"))

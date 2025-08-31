@@ -57,14 +57,9 @@ def save_loss_curve(losses, outpath, smooth=0, xlabel="Epoch", ylabel="Loss", ti
 
 
 def _mask_to_spans(mask_1d: np.ndarray) -> list[tuple[int, int]]:
-    """
-    Convert a boolean 1D mask (length T) into [ (start_idx, end_idx), ... ] spans
-    where the mask is True. end_idx is exclusive.
-    """
     m = np.asarray(mask_1d).astype(bool).reshape(-1)
     if m.size == 0:
         return []
-    # pad to catch trailing run
     padded = np.concatenate([[False], m, [False]])
     starts = np.flatnonzero((~padded[:-1]) & padded[1:])
     ends   = np.flatnonzero(padded[:-1] & (~padded[1:]))
@@ -72,17 +67,6 @@ def _mask_to_spans(mask_1d: np.ndarray) -> list[tuple[int, int]]:
 
 
 def _infer_stim_layout(input_dim: int, obs_name: dict | None) -> tuple[int, int]:
-    """
-    Infer (ring_dim, n_modalities) from input dimension and (optional) obs_name mapping.
-
-    Convention in mod_cog_tasks.py:
-      - channel 0 is fixation
-      - channels 1..ring_dim are 'stimulus' for a single modality
-      - if multiple modalities are used, 'stimulus' blocks are concatenated:
-            [fix] [stim M0 (ring_dim)] [stim M1 (ring_dim)] ...
-
-    Returns (ring_dim, n_modalities).
-    """
     if obs_name and isinstance(obs_name, dict) and 'stimulus' in obs_name:
         ring_dim = len(obs_name['stimulus'])
         if ring_dim <= 0 or input_dim <= 1:
@@ -90,12 +74,10 @@ def _infer_stim_layout(input_dim: int, obs_name: dict | None) -> tuple[int, int]
         n_mod = max(1, (input_dim - 1) // ring_dim)
         return ring_dim, n_mod
 
-    # Fallback: try common ring sizes
     candidates = [64, 48, 40, 36, 32, 24, 20, 18, 16, 12, 10, 9, 8]
     for rd in candidates:
         if rd > 0 and (input_dim - 1) % rd == 0:
             return rd, (input_dim - 1) // rd
-    # Ultimate fallback: treat it as a single "ring"
     return input_dim - 1, 1
 
 
@@ -126,7 +108,6 @@ def save_task_trial_overview(
     Xb = X[b]
     Lb = L[b]
 
-    # Decision mask handling
     M = None
     if dec_mask is not None:
         M = _to_numpy(dec_mask)
@@ -138,7 +119,7 @@ def save_task_trial_overview(
         spans = []
 
     ring_dim, n_mod = _infer_stim_layout(D, obs_name)
-    n_rows = 2 + n_mod  # fixation + modalities + outputs
+    n_rows = 2 + n_mod 
     time = np.arange(T)
 
     import matplotlib.pyplot as plt
@@ -148,16 +129,14 @@ def save_task_trial_overview(
         "xtick.labelsize": 10, "ytick.labelsize": 10, "legend.fontsize": 10,
     })
 
-    # ---- Use constrained layout; do NOT call tight_layout() later ----
     figsize = (10.0, 6.0 + 1.5 * max(0, n_mod - 1))
     try:
-        fig = plt.figure(figsize=figsize, layout="constrained")  # mpl >= 3.6
+        fig = plt.figure(figsize=figsize, layout="constrained") 
     except TypeError:
-        fig = plt.figure(figsize=figsize, constrained_layout=True)  # older mpl
+        fig = plt.figure(figsize=figsize, constrained_layout=True)
 
     gs = fig.add_gridspec(n_rows, 1, height_ratios=[1] + [2]*n_mod + [2.5])
 
-    # (1) Fixation input
     ax_fix = fig.add_subplot(gs[0, 0])
     ax_fix.plot(time, Xb[:, 0], lw=1.8)
     ax_fix.set_ylabel("Fixation\ninput")
@@ -167,11 +146,10 @@ def save_task_trial_overview(
         ax_fix.axvspan(s0, s1, color="0.85", alpha=0.6, lw=0)
     ax_fix.grid(alpha=0.2, linestyle=":")
 
-    # (2) Stimulus heatmap(s)
     for m in range(n_mod):
         start = 1 + m * ring_dim
         stop  = start + ring_dim
-        stim_block = Xb[:, start:stop]    # (T, ring_dim)
+        stim_block = Xb[:, start:stop]   
         ax_stim = fig.add_subplot(gs[1 + m, 0], sharex=ax_fix)
         im = ax_stim.imshow(
             stim_block.T, aspect="auto", origin="lower", interpolation="nearest",
@@ -183,11 +161,9 @@ def save_task_trial_overview(
         tick_vals = [0, ring_dim//2, ring_dim-1]
         ax_stim.set_yticks(tick_vals)
         ax_stim.set_yticklabels([r"$0^\circ$", r"$180^\circ$", r"$360^\circ$"])
-        # Use fig.colorbar so constrained layout knows about it
         cbar = fig.colorbar(im, ax=ax_stim, fraction=0.046, pad=0.02)
         cbar.ax.tick_params(labelsize=8)
 
-    # (3) Network outputs
     ax_out = fig.add_subplot(gs[-1, 0], sharex=ax_fix)
     ax_out.plot(time, Lb[:, 0], lw=1.8, label="fixation logit (0)")
 
@@ -210,7 +186,6 @@ def save_task_trial_overview(
     ax_out.legend(loc="upper right", frameon=False, ncol=1)
     ax_out.grid(alpha=0.2, linestyle=":")
 
-    # No tight_layout() here
     fig.savefig(outpath, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
@@ -310,10 +285,8 @@ def save_weight_hists_W_hh(
     plt.tight_layout(); plt.savefig(outpath, dpi=140); plt.close()
 
 
-# ---------- Thesis-grade curve helpers ----------
 
 def _ema(y: np.ndarray, beta: float) -> np.ndarray:
-    """Exponential moving average, beta in [0,1)."""
     y = _to_numpy(y).astype(float).reshape(-1)
     if y.size == 0:
         return y
@@ -326,22 +299,27 @@ def _ema(y: np.ndarray, beta: float) -> np.ndarray:
 
 
 def _rolling(y: np.ndarray, win: int) -> np.ndarray:
-    """Simple rolling mean with window size win."""
     y = _to_numpy(y).astype(float).reshape(-1)
-    return _moving_average(y, max(1, int(win)))
+    k = int(max(1, win))
+    if k == 1 or y.size == 0:
+        return y
+    if k % 2 == 0:
+        k += 1  
+    pad = k // 2
+    yp = np.pad(y, (pad, pad), mode="edge")
+    ker = np.ones(k, dtype=float) / float(k)
+    out = np.convolve(yp, ker, mode="valid") 
+    return out
 
 
 def _conf_band(y: np.ndarray, win: int) -> tuple[np.ndarray, np.ndarray]:
-    """Rolling mean ± 1 std over a centered window."""
     y = _to_numpy(y).astype(float).reshape(-1)
     if win <= 1 or y.size == 0:
         return y, np.zeros_like(y)
     k = int(win)
-    # centered windows: pad at ends
     pad = k // 2
     yp = np.pad(y, (pad, pad), mode="edge")
     means = np.convolve(yp, np.ones(k)/k, mode="valid")
-    # rolling std
     sq = np.convolve(yp**2, np.ones(k)/k, mode="valid")
     std = np.sqrt(np.maximum(0.0, sq - means**2))
     return means, std
@@ -355,13 +333,9 @@ def save_training_curve(
     xlabel: str = "training steps",
     ylabel: str = "metric",
     title: str | None = None,
-    smooth: dict | None = None,      # e.g. {"ema": 0.98} or {"window": 101}
-    shade_window: int | None = 0,    # e.g. 101 for mean±std band
+    smooth: dict | None = None,
+    shade_window: int | None = 0,
 ):
-    """
-    Save a single training metric curve with optional smoothing and shaded band.
-    Writes both PNG and PDF with the same prefix.
-    """
     _ensure_dir(outprefix + ".png")
 
     y = _to_numpy(y_raw).astype(float).reshape(-1)
@@ -371,7 +345,6 @@ def save_training_curve(
         x = _to_numpy(x).astype(float).reshape(-1)
         assert len(x) == len(y), "x and y must have the same length"
 
-    # smoothing
     y_sm = y.copy()
     if smooth:
         if "ema" in smooth and smooth["ema"] is not None:
@@ -379,7 +352,6 @@ def save_training_curve(
         elif "window" in smooth and smooth["window"] and smooth["window"] > 1:
             y_sm = _rolling(y, int(smooth["window"]))
 
-    # confidence shading (on raw series, rolled)
     mean_band = None
     std_band = None
     if shade_window and shade_window > 1 and len(y) >= shade_window:
@@ -387,12 +359,8 @@ def save_training_curve(
 
     import matplotlib.pyplot as plt
     plt.rcParams.update({
-        "font.size": 11,
-        "axes.labelsize": 11,
-        "axes.titlesize": 12,
-        "xtick.labelsize": 10,
-        "ytick.labelsize": 10,
-        "legend.fontsize": 10,
+        "font.size": 11, "axes.labelsize": 11, "axes.titlesize": 12,
+        "xtick.labelsize": 10, "ytick.labelsize": 10, "legend.fontsize": 10,
     })
 
     fig = plt.figure(figsize=(8.0, 4.0))
@@ -406,8 +374,7 @@ def save_training_curve(
     ax.plot(x, y_sm, lw=2.0, label="smoothed")
 
     ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
-    if title:
-        ax.set_title(title)
+    if title: ax.set_title(title)
     ax.grid(alpha=0.25, linestyle=":")
     ax.legend(frameon=False, ncol=2, loc="best")
 
@@ -415,7 +382,6 @@ def save_training_curve(
     plt.savefig(outprefix + ".png", dpi=200, bbox_inches="tight")
     plt.savefig(outprefix + ".pdf", dpi=300, bbox_inches="tight")
     plt.close(fig)
-
 
 def save_multitask_curves(
     curves: dict[str, ArrayLike],
@@ -425,28 +391,24 @@ def save_multitask_curves(
     xlabel: str = "epochs",
     ylabel: str = "accuracy",
     title: str | None = None,
-    smooth: dict | None = None,      # same format as above
+    smooth: dict | None = None,
 ):
-    """
-    Plot multiple task curves on one figure with consistent smoothing.
-    Writes PNG and PDF.
-    """
     _ensure_dir(outprefix + ".png")
 
-    # compute smoothed versions
     def _apply_smooth(v):
         v = _to_numpy(v).astype(float).reshape(-1)
         if not smooth:
             return v
         if "ema" in smooth and smooth["ema"] is not None:
-            return _ema(v, float(smooth["ema"]))
+            return _ema(v, float(smooth["ema"]))         
         if "window" in smooth and smooth["window"] and smooth["window"] > 1:
-            return _rolling(v, int(smooth["window"]))
+            return _rolling(v, int(smooth["window"]))    
         return v
 
     keys = list(curves.keys())
     series = {k: _to_numpy(curves[k]).astype(float).reshape(-1) for k in keys}
-    max_len = max(len(v) for v in series.values()) if keys else 0
+    max_len = max((len(v) for v in series.values()), default=0)
+
     if x is None:
         x = np.arange(max_len)
     else:
@@ -454,21 +416,20 @@ def save_multitask_curves(
 
     import matplotlib.pyplot as plt
     plt.rcParams.update({
-        "font.size": 11,
-        "axes.labelsize": 11,
-        "axes.titlesize": 12,
-        "xtick.labelsize": 10,
-        "ytick.labelsize": 10,
-        "legend.fontsize": 10,
+        "font.size": 11, "axes.labelsize": 11, "axes.titlesize": 12,
+        "xtick.labelsize": 10, "ytick.labelsize": 10, "legend.fontsize": 10,
     })
 
     fig = plt.figure(figsize=(8.0, 4.5))
     ax = fig.add_subplot(111)
+
     any_plotted = False
     for k in keys:
         y = series[k]
-        xs = x[:len(y)]
+        if y.size == 0:
+            continue
         ys = _apply_smooth(y)
+        xs = x[:len(ys)]  
         ax.plot(xs, ys, lw=2.0, marker="o", markersize=3, label=str(k))
         any_plotted = True
 
@@ -476,8 +437,7 @@ def save_multitask_curves(
         plt.close(fig); return
 
     ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
-    if title:
-        ax.set_title(title)
+    if title: ax.set_title(title)
     if len(keys) > 1:
         ax.legend(frameon=False, ncol=2, loc="best")
     ax.grid(alpha=0.25, linestyle=":")

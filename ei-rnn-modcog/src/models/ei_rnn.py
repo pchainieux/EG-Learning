@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from dataclasses import dataclass
 
 @dataclass
 class EIConfig:
@@ -12,6 +13,8 @@ class EIConfig:
     leak: float = 0.2
     nonlinearity: str = "softplus"
     readout: str = "all"
+    softplus_beta: float = 8.0 
+    softplus_threshold: float = 20.0  
 
 class EIRNN(nn.Module):
     def __init__(self, input_size: int, output_size: int, cfg: EIConfig):
@@ -55,9 +58,12 @@ class EIRNN(nn.Module):
 
     def _phi(self, x: torch.Tensor) -> torch.Tensor:
         if self._nl_kind == "softplus":
-            return F.softplus(x)
+            return F.softplus(x,
+                            beta=float(self.cfg.softplus_beta),
+                            threshold=float(self.cfg.softplus_threshold))
         else:
-            return torch.tanh(x) 
+            return torch.tanh(x)
+
 
     @torch.jit.ignore
     def _step(self, h, xw_t):

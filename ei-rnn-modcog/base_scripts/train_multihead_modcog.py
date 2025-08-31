@@ -155,7 +155,6 @@ def main():
     cfg = yaml.safe_load(open(args.config, "r"))
     data_cfg  = cfg.get("data", {})
 
-    # config
     seed      = int(cfg.get("seed", 7))
     set_seed_all(seed, deterministic=False)
     dev_str   = cfg.get("device", "auto")
@@ -195,7 +194,6 @@ def main():
     device = pick_device(dev_str)
     print(f"Using device: {device_name(device)}")
 
-    # data 
     dsets = build_task_datasets(tasks, batch_sz, seq_len, data_cfg)
     input_dims = {t: dsets[t][3] for t in tasks}
     if len(set(input_dims.values())) != 1:
@@ -206,13 +204,11 @@ def main():
     input_dim = X0.shape[-1]
     print(f"Multi-head over tasks={tasks} | in={input_dim}, heads={head_dims}")
 
-    # core + heads
     core = EIRNN(input_dim, output_size=max(head_dims.values()),
                  cfg=EIConfig(hidden_size=hidden, exc_frac=exc_frac,
                               spectral_radius=spectral_radius, input_scale=input_scale)).to(device)
     heads = MultiHeadReadout(hidden, head_dims).to(device)
 
-    # optim
     params = []
     if algo == "eg":
         params.append({"params": [core.W_hh], "update_alg": "eg", "lr": lr_eg, "momentum": mom_eg,
@@ -230,7 +226,6 @@ def main():
 
     crit = ModCogLossCombined(label_smoothing=label_smoothing, fixdown_weight=fixdown)
 
-    # histories for viz 
     epoch_train_losses: list[float] = []
     acc_history: dict[str, list[float]] = {t: [] for t in tasks}
 
@@ -273,7 +268,6 @@ def main():
         print(f"[epoch {epoch:03d}] train: loss {meter['loss']:.3f} | acc {meter['acc']*100:5.1f}% "
               f"| dec {meter['acc_dec']*100:5.1f}% | {(time.time()-t0):.2f}s")
 
-        # validation per task + viz updates 
         per_task_val_acc = {}
         for t in tasks:
             val = evaluate_task(core, heads, t, dsets[t][1], device, mask_thr, batches=V, input_noise_std=noise)
