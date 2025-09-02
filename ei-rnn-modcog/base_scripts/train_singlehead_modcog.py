@@ -326,6 +326,26 @@ def main():
                 smooth={"window": max(3, len(epochs_x) // 5)},
             )
 
+        np.savez(outdir / "metrics_steps.npz",
+                 step_idx=np.asarray(step_idx, dtype=float),
+                 loss_train_step=np.asarray(train_loss_steps, dtype=float),
+                 acc_train_step=np.asarray(train_acc_steps, dtype=float),
+                 acc_dec_train_step=np.asarray(train_acc_dec_steps, dtype=float))
+
+        if len(tasks) > 0:
+            vals = [np.asarray(acc_history[t], dtype=float) for t in tasks]
+            max_len = max(len(v) for v in vals)
+            vals = [np.pad(v, (0, max_len - len(v)), constant_values=np.nan) for v in vals]
+            val_acc_epoch_mean = np.nanmean(np.vstack(vals), axis=0)
+        else:
+            val_acc_epoch_mean = np.asarray([], dtype=float)
+
+        np.savez(outdir / "metrics_epoch.npz",
+                 epoch_idx=np.arange(1, len(epoch_train_losses) + 1, dtype=float),
+                 train_loss_epoch=np.asarray(epoch_train_losses, dtype=float),
+                 val_acc_epoch_mean=val_acc_epoch_mean)
+
+
         Xv, Yv = dsets[tasks[0]][1]()
         Xv_t = ensure_tensor(Xv, torch.float32, device)
         dec_mask_v = decision_mask_from_inputs(Xv_t, thresh=mask_thr)
@@ -341,15 +361,6 @@ def main():
             sample_idx=0,
             topk_logits=3,
             title="Example trial",
-        )
-
-        viz.save_logits_time_trace(
-            logits_v.detach(),
-            str(outdir / f"example_trial_epoch{epoch:03d}.png"),
-            dec_mask=dec_mask_v,
-            topk=3,
-            sample_idx=0,
-            title="Example trial logits"
         )
     
         viz.save_weight_hists_W_hh(

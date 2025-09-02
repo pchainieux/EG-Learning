@@ -1,0 +1,68 @@
+seed: 1
+device: auto
+outdir: outputs/lrsweep_dm1
+
+tasks: ["dm1"]
+
+data:
+  source: cached
+  batch_size: 128
+  seq_len: 120
+  cache:
+    num_batches: 512
+    val_frac: 0.1
+    build_if_missing: true
+    seed: 7
+    paths:
+      dm1: outputs/cache/dm1_T120_B128_NB512.npz
+
+model:
+  hidden_size: 256
+  exc_frac: 0.8
+  spectral_radius: 1.1
+  input_scale: 1.0
+  leak: 1
+  nonlinearity: softplus
+  readout: all
+  softplus_beta: 8.0
+  softplus_threshold: 20.0
+
+optim:
+  algorithm: eg
+  eg:
+    lr: 0.1       
+    momentum: 0.0
+    weight_decay: 1e-5
+    min_magnitude: 1e-6
+  gd:
+    lr: 0.05   
+    momentum: 0.9
+    weight_decay: 1e-5
+
+train:
+  num_epochs: 5
+  steps_per_epoch: 300
+  val_batches: 20
+  grad_clip: 1.0
+  input_noise_std: 0.0
+  fixdown_weight: 0.5
+  spectral_renorm_every: 0
+  mask_threshold: 0.5
+  label_smoothing: 0.1
+
+sweep:
+  algorithms: ["eg","gd"]
+  # shared grid for both optimizers (easier to compare on one axis)
+  lr_shared_grid: [0.003, 0.01, 0.03, 0.1, 0.2, 0.3, 0.5, 0.6]
+  seeds: [1]
+  resume: true 
+  skip_existing: true
+  plateau:
+    window: 2
+    tol: 0.002
+  plot:
+    make_plots: true
+    plot_plateau: true
+    target_lr:           # optional vertical markers; fill if you pick winners
+      eg:
+      gd:

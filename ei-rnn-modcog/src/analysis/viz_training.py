@@ -213,54 +213,6 @@ def save_per_task_accuracy_curves(per_task_acc, outpath, smooth=0, xlabel="Epoch
         plt.legend(loc=legend_loc, frameon=False)
     plt.tight_layout(); plt.savefig(outpath, dpi=140); plt.close()
 
-def save_logits_time_trace(
-    logits: ArrayLike,
-    outpath: str,
-    dec_mask: Optional[ArrayLike] = None,
-    topk: int = 3,
-    sample_idx: int = 0,
-    title: Optional[str] = "Example trial logits",
-    fixation_class: int = 0,
-):
-    _ensure_dir(outpath)
-
-    L = _to_numpy(logits)
-    if L.ndim == 2:
-        L = L[None, ...]
-    assert L.ndim == 3, f"logits must be (B,T,C) or (T,C); got {L.shape}"
-    B, T, C = L.shape
-
-    b = min(sample_idx, B - 1)
-    Lb = L[b]
-
-    fix = np.asarray(Lb[:, fixation_class])
-    choices = np.delete(Lb, fixation_class, axis=1) if C > 1 else np.empty((T, 0))
-    if choices.shape[1] > 0:
-        energy = choices.var(axis=0)
-        k = min(topk, choices.shape[1])
-        top_idx = np.argsort(energy)[-k:]
-    else:
-        top_idx = np.array([], dtype=int)
-
-    plt.figure()
-    plt.plot(fix, label=f"fixation logit ({fixation_class})", lw=1.6)
-    for j in top_idx:
-        cls = j + (1 if fixation_class == 0 else 0)
-        plt.plot(choices[:, j], label=f"choice logit {cls}", lw=1.2)
-
-    if dec_mask is not None:
-        M = _to_numpy(dec_mask)
-        if M.ndim == 2:
-            M = M[b]
-        M = M.astype(float).reshape(-1)
-        ylo, yhi = plt.ylim()
-        plt.plot(M * (yhi - ylo) + ylo, ls="--", label="decision mask (scaled)")
-
-    if title: plt.title(title)
-    plt.xlabel("time"); plt.ylabel("logit")
-    plt.legend(loc="best", frameon=False)
-    plt.tight_layout(); plt.savefig(outpath, dpi=150); plt.close()
-
 def save_weight_hists_W_hh(
     W_hh: ArrayLike,
     sign_vec: Optional[ArrayLike],
