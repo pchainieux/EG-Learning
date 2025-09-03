@@ -27,69 +27,64 @@ eigrad-plots:
 eigrad-all: eigrad-collect eigrad-metrics eigrad-plots
 
 # ================================
-# SIMPLE FIXED-POINTS PIPELINE
+# FIXED-POINTS PIPELINE (SIMPLIFIED)
 # ================================
 
 # Main config (YAML) and output locations
-CONFIG ?= fixed_points.yaml
+CONFIG ?= configs/fixed_points/fixed_points.yaml
 OUT_ROOT ?= outputs/fp_runs
 NAME ?= default
 OUTDIR ?= $(OUT_ROOT)/$(NAME)
 
-# Grid defaults (edit freely)
+# Grid defaults
 INH_LEVELS ?= 0.10 0.20 0.35 0.50
 OPTIMS ?= eg gd
 SEEDS ?= 1 2 3
 
-.PHONY: help fp-all fp-one train cache-build fp-grid aggregate clean
+.PHONY: help fp-train fp-rollout fp-solve fp-plot fp-single-run fp-grid fp-aggregate fp-clean
 
 help:
-> @echo "Targets:"
-> @echo "  EI gradient:  eigrad-collect eigrad-metrics eigrad-plots eigrad-all [CFG=...]"
-> @echo "  Fixed points: fp-all fp-one train cache-build fp-grid aggregate clean"
-> @echo
-> @echo "Vars:"
-> @echo "  CONFIG=<cfg.yaml> OUTDIR=<outputs/fp_runs/your_name>"
-> @echo "  OUT_ROOT, OPTIMS='eg gd', INH_LEVELS='0.10 0.20 0.35 0.50', SEEDS='1 2 3'"
+> @echo "Fixed Points Pipeline Targets:"
+> @echo "  fp-train       : Train a single model (uses CONFIG, OUTDIR)"
+> @echo "  fp-rollout     : Collect hidden state seeds from a trained model"
+> @echo "  fp-solve       : Find and analyze fixed points from seeds"
+> @echo "  fp-plot        : Generate plots from fixed point analysis"
+> @echo "  fp-single-run  : Run the full pipeline for a single config (train -> rollout -> solve -> plot)"
+> @echo "  fp-grid-config : Generate config files for a parameter grid (does not run them)"
+> @echo "  fp-grid        : Run fp-single-run for each config in the grid (WARNING: runs jobs sequentially!)"
+> @echo "  fp-aggregate   : Aggregate results from OUT_ROOT into a single CSV"
+> @echo "  fp-clean       : Remove the OUT_ROOT directory"
+> @echo ""
+> @echo "Variables:"
+> @echo "  CONFIG=$(CONFIG)"
+> @echo "  OUTDIR=$(OUTDIR)"
+> @echo "  OUT_ROOT=$(OUT_ROOT)"
+> @echo "  OPTIMS=$(OPTIMS)"
+> @echo "  INH_LEVELS=$(INH_LEVELS)"
+> @echo "  SEEDS=$(SEEDS)"
 
-# Train (uses CONFIG)
-train:
-> $(PY) train_singlehead_modcog.py --config $(CONFIG)
+# 1. Train a model
+fp-train:
+> $(PYTHON) -m base_scripts.train_singlehead_modcog --config $(CONFIG) --outdir $(OUTDIR)
 
-# Full fixed-point pipeline for a single run (train if needed, analyze, plot)
-fp-all: fp-one
-fp-one:
-> $(PY) -m experiments.fixed_points.scripts.run_fixed_points --config $(CONFIG) --outdir $(OUTDIR) --plot
+# 2. Collect rollout seeds (requires a trained model)
+fp-rollout:
+> $(PYTHON) -m experiments.fixed_points.scripts.run_fixed_points --config $(CONFIG) --outdir $(OUTDIR) --no-train
 
-# Pre-build cache files according to CONFIG.data.cache.{num_batches, paths, seed, ...}
-cache-build:
-> $(PY) - <<'PY'
-> import yaml, sys
-> from pathlib import Path
-> from src.data.dataset_cached import build_cached_dataset, save_cached_npz
-> cfg = yaml.safe_load(open("$(CONFIG)", "r")) or {}
-> data = cfg.get("data", {})
-> if data.get("source", "online").lower() != "cached":
->     print("data.source is not 'cached' in", "$(CONFIG)"); sys.exit(0)
-> cache = data.get("cache", {}) or {}
-> nb = int(cache.get("num_batches", 200))
-> bs = int(data.get("batch_size", 128))
-> L  = int(data.get("seq_len", 80))
-> seed = cache.get("seed", None)
-> paths = cache.get("paths", {}) or {}
-> tasks = cfg.get("tasks", ["dm1"])
-> if isinstance(tasks, str): tasks = [tasks]
-> for t in tasks:
->     out = paths.get(t, f"runs/cache/{t}_{nb}x{bs}x{L}.npz")
->     Path(out).parent.mkdir(parents=True, exist_ok=True)
->     cached, _ = build_cached_dataset(t, nb, bs, L, seed=seed)
->     save_cached_npz(out, cached, meta={"task": t, "seq_len": L})
->     print("wrote", out)
-> PY
+# 3. Solve for fixed points (requires rollout seeds)
+fp-solve:
+> $(PYTHON) -m experiments.fixed_points.scripts.unified_fixed_points --run $(OUTDIR)/run --config $(CONFIG)
 
-# Grid over optimizer x inhibitory fraction x seed:
-# creates a temporary config per combo and runs the full pipeline.
-fp-grid:
+# 4. Plot results (requires solved fixed points)
+fp-plot:
+> $(PYTHON) -m experiments.fixed_points.scripts.plot_fixed_points --run $(OUTDIR)/run
+
+# 5. Full pipeline for a single configuration
+fp-single-run: fp-train fp-rollout fp-solve fp-plot
+
+# 6. Generate config files for a parameter grid
+fp-grid-config:
+> @echo "Generating config files for grid in $(OUT_ROOT)..."
 > set -euo pipefail; \
 > mkdir -p "$(OUT_ROOT)"; \
 > for opt in $(OPTIMS); do \
@@ -98,27 +93,43 @@ fp-grid:
 >       out="$(OUT_ROOT)/opt-$${opt}/inh-$${inh}/seed-$${s}"; \
 >       cfg="$$out/config.yaml"; \
 >       mkdir -p "$$out/run"; \
->       $(PY) -u -c 'import sys, yaml, pathlib as p; \
+>       $(PYTHON) -c " \
+> import sys, yaml, pathlib as p; \
 > cfg_in, cfg_out, out, opt, inh, seed = sys.argv[1:7]; \
-> cfg = yaml.safe_load(open(cfg_in, "r")) or {}; \
-> cfg.setdefault("optim", {})["algorithm"] = opt; \
-> cfg["model"] = cfg.get("model", {}); \
-> cfg["model"]["exc_frac"] = 1.0 - float(inh); \
-> cfg["seed"] = int(float(seed)); \
-> cfg["outdir"] = out; \
+> cfg = yaml.safe_load(open(cfg_in, 'r')) or {}; \
+> cfg.setdefault('optim', {})['algorithm'] = opt; \
+> cfg['model'] = cfg.get('model', {}); \
+> cfg['model']['exc_frac'] = 1.0 - float(inh); \
+> cfg['seed'] = int(float(seed)); \
+> cfg['outdir'] = out; \
 > p.Path(out).mkdir(parents=True, exist_ok=True); \
-> yaml.safe_dump(cfg, open(cfg_out, "w"), sort_keys=False)' \
->         "$(CONFIG)" "$$cfg" "$$out" "$$opt" "$$inh" "$$s"; \
->       $(PY) run_fixed_points.py --config "$$cfg" --outdir "$$out" --plot; \
+> with open(cfg_out, 'w') as f: \
+>     yaml.safe_dump(cfg, f, sort_keys=False) \
+>       " "$(CONFIG)" "$$cfg" "$$out" "$$opt" "$$inh" "$$s"; \
+>       echo "Generated: $$cfg"; \
 >     done; \
 >   done; \
 > done
+> @echo "Config generation complete. Now run: make fp-grid-run"
 
-# Aggregate per-run summaries into a single CSV under OUT_ROOT
-aggregate:
-> $(PY) aggregate.py --root $(OUT_ROOT) --out $(OUT_ROOT)/aggregate.csv
-> @echo "aggregate → $(OUT_ROOT)/aggregate.csv"
+# 7. Run the full pipeline for each generated config (SEQUENTIAL - for testing)
+fp-grid-run:
+> @echo "WARNING: This runs jobs SEQUENTIALLY. For a real grid, use a job array."
+> set -euo pipefail; \
+> for cfg in $$(find "$(OUT_ROOT)" -name "config.yaml"); do \
+>   outdir=$$(dirname "$$cfg"); \
+>   echo "--- Running pipeline for $$outdir ---"; \
+>   $(PYTHON) -m experiments.fixed_points.scripts.run_fixed_points --config "$$cfg" --outdir "$$outdir" --plot || { echo "Failed on $$outdir"; exit 1; }; \
+> done
 
-# Nuke the OUT_ROOT directory (be careful!)
-clean:
+# 8. Alias for generating configs and running them (the old fp-grid behavior)
+fp-grid: fp-grid-config fp-grid-run
+
+# 9. Aggregate results
+fp-aggregate:
+> $(PYTHON) -m experiments.fixed_points.scripts.aggregate --root $(OUT_ROOT) --out $(OUT_ROOT)/aggregate.csv
+> @echo "Aggregate → $(OUT_ROOT)/aggregate.csv"
+
+# 10. Clean up
+fp-clean:
 > rm -rf $(OUT_ROOT)

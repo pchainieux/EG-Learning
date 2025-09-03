@@ -1,8 +1,9 @@
 exp_id: "exp_ei_credit"
-out_dir: outputs/ei_gradient_outputs/exp_ei_credit_gd_ckpt_7
+out_dir: outputs/ei_gradient/eg
 
 # Single head checkpoints only
-checkpoint: "outputs/exp_singlehead_gd_correct/singlehead_epoch007.pt"
+checkpoint: "outputs/final/model_perf/eg_t_1_H_256/singlehead_epoch020.pt"
+#checkpoint: "outputs/final/model_perf/gd_t_1_H_256/singlehead_epoch002.pt"
 
 ei_from_checkpoint: true  
 activation: "softplus"

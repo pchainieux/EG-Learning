@@ -33,6 +33,46 @@ mpl.rcParams.update({
     ]),
 })
 
+YLIMS = {
+    "cosine":      (-1.0, 1.0),     # full cosine range
+}
+
+def plot_timecourses_ei(
+    data: dict[str, np.ndarray],
+    ylabel: str,
+    outpath: Path,
+    trim_edges: int = 0,
+    ylim: tuple[float, float] | None = None,
+):
+    """Plot EI timecourses with fixed colors (E=red, I=blue), optional edge trim and y-limits."""
+    def _ei_color_from_label(label: str) -> str | None:
+        s = label.strip().lower()
+        if "(e" in s or s.endswith(" e") or "excitatory" in s:
+            return "red"
+        if "(i" in s or s.endswith(" i") or "inhibitory" in s:
+            return "blue"
+        return None
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    for label, y in data.items():
+        y = np.asarray(y)
+        if trim_edges > 0:
+            if y.shape[0] <= 2 * trim_edges:
+                continue
+            y = y[trim_edges:-trim_edges]
+        x = np.arange(len(y))
+        ax.plot(x, y, label=label, color=_ei_color_from_label(label))
+
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+
+    _finalize_axes(ax, xlabel="Time", ylabel=ylabel)
+    ax.legend(loc="upper right", ncol=1)
+    fig.tight_layout()
+    fig.savefig(outpath)
+    plt.close(fig)
+
+
 def load_yaml(path: str | Path) -> dict:
     with open(path, "r") as f:
         return yaml.safe_load(f)
@@ -52,17 +92,6 @@ def _finalize_axes(ax, xlabel: str, ylabel: str):
     ax.set_ylabel(ylabel)
     ax.grid(True, which="both", axis="both", alpha=0.25)
     ax.tick_params(direction="out", length=4, width=0.8)
-
-def plot_timecourses(data: dict[str, np.ndarray], ylabel: str, outpath: Path):
-    fig, ax = plt.subplots(figsize=(10, 4))
-    for label, y in data.items():
-        x = np.arange(len(y))
-        ax.plot(x, y, label=label)
-    _finalize_axes(ax, xlabel="Time", ylabel=ylabel)
-    ax.legend(loc="upper right", ncol=1)
-    fig.tight_layout()
-    fig.savefig(outpath)
-    plt.close(fig)
 
 def plot_distributions(series: dict[str, np.ndarray], xlabel: str, outpath: Path, bins=40):
     fig, ax = plt.subplots(figsize=(10, 4))
@@ -108,18 +137,20 @@ def plot_saliency_two(
     left: np.ndarray,
     right: np.ndarray,
     outpath: Path,
-    cbar_label: str = "abs(dLoss/dx)"
+    cbar_label: str = "abs(dLoss/dx)",
+    left_title: str = "Fixation",
+    right_title: str = "Decision",
 ):
     fig, axes = plt.subplots(
-        1, 2, figsize=(14, 5), sharex=True, sharey=True,
-        constrained_layout=True
+        1, 2, figsize=(14, 5), sharex=True, sharey=True, constrained_layout=True
     )
 
+    # shared color scale
     vmin = min(np.min(left), np.min(right))
     vmax = max(np.max(left), np.max(right))
 
     ims = []
-    for ax, arr in zip(axes, (left, right)):
+    for ax, arr, title in zip(axes, (left, right), (left_title, right_title)):
         im = ax.imshow(
             arr,
             aspect="auto",
@@ -127,8 +158,9 @@ def plot_saliency_two(
             cmap="viridis",
             interpolation="nearest",
             rasterized=True,
-            vmin=vmin, vmax=vmax
+            vmin=vmin, vmax=vmax,
         )
+        ax.set_title(title, pad=8, fontweight="bold")
         _finalize_axes(ax, xlabel="Time", ylabel="Channel")
         ims.append(im)
 
@@ -143,6 +175,7 @@ def plot_saliency_two(
 
     fig.savefig(outpath, bbox_inches="tight")
     plt.close(fig)
+
 
 
 def main():
@@ -168,49 +201,62 @@ def main():
     df_tc = pd.read_csv(tc_csv)
     df_units = pd.read_csv(units_csv)
 
+    # --- mean |grad| ---
     need_cols = ["tc_abs_E", "tc_abs_I"]
     if all(c in df_tc.columns for c in need_cols):
-        plot_timecourses(
-            {"mean abs grad (E)": df_tc["tc_abs_E"].to_numpy(),
-             "mean abs grad (I)": df_tc["tc_abs_I"].to_numpy()},
+        plot_timecourses_ei(
+            {
+                "mean abs grad (E)": df_tc["tc_abs_E"].to_numpy(),
+                "mean abs grad (I)": df_tc["tc_abs_I"].to_numpy(),
+            },
             ylabel="Mean absolute gradient",
             outpath=figs_dir / "tc_meanabs.png",
+            trim_edges=25,   # drop first/last 25 steps
         )
     else:
-        print("[plot_all] Skipping mean |g| timecourse (columns not found).", file=sys.stderr)
+        print("[plot_all] Skipping mean |grad| timecourse (columns not found).", file=sys.stderr)
+
 
     need_cols = ["tc_l2_E", "tc_l2_I"]
     if all(c in df_tc.columns for c in need_cols):
-        plot_timecourses(
+        plot_timecourses_ei(
             {"L2 norm (E)": df_tc["tc_l2_E"].to_numpy(),
-             "L2 norm (I)": df_tc["tc_l2_I"].to_numpy()},
+            "L2 norm (I)": df_tc["tc_l2_I"].to_numpy()},
             ylabel="Mean L2 norm",
             outpath=figs_dir / "tc_l2.png",
+            trim_edges=25,   # drop first/last 25 steps
         )
     else:
         print("[plot_all] Skipping raw L2 timecourse (columns not found).", file=sys.stderr)
 
+
     need_cols = ["tc_l2_E_norm", "tc_l2_I_norm"]
     if all(c in df_tc.columns for c in need_cols):
-        plot_timecourses(
+        plot_timecourses_ei(
             {"L2 per unit (E)": df_tc["tc_l2_E_norm"].to_numpy(),
-             "L2 per unit (I)": df_tc["tc_l2_I_norm"].to_numpy()},
+            "L2 per unit (I)": df_tc["tc_l2_I_norm"].to_numpy()},
             ylabel="Mean L2 per unit",
             outpath=figs_dir / "tc_l2_norm.png",
+            trim_edges=25,   # drop first/last 25 steps
         )
     else:
         print("[plot_all] Skipping normalized L2 timecourse (columns not found).", file=sys.stderr)
 
+
     need_cols = ["tc_cos_E", "tc_cos_I"]
     if all(c in df_tc.columns for c in need_cols):
-        plot_timecourses(
-            {"cosine(h, grad) E": df_tc["tc_cos_E"].to_numpy(),
-             "cosine(h, grad) I": df_tc["tc_cos_I"].to_numpy()},
+        plot_timecourses_ei(
+            {"cosine(h, grad) (E)": df_tc["tc_cos_E"].to_numpy(),
+            "cosine(h, grad) (I)": df_tc["tc_cos_I"].to_numpy()},
             ylabel="Cosine similarity",
             outpath=figs_dir / "tc_alignment.png",
+            trim_edges=25,
+            ylim=YLIMS["cosine"],
         )
     else:
-        print("[plot_all] Skipping alignment timecourse (columns not found).", file=sys.stderr)
+        print("[plot_all] Skipping cosine timecourse (columns not found).", file=sys.stderr)
+
+
 
     if set(["Wbp_sum", "Wbp_mean", "Fisher", "type"]).issubset(df_units.columns):
         e_mask = df_units["type"] == "E"
@@ -238,23 +284,56 @@ def main():
         print("[plot_all] Skipping distributions (metrics_units.csv missing expected columns).", file=sys.stderr)
 
     grads_pt = grads_dir / "grads.pt"
+
     if grads_pt.exists():
         T = load_tensors(grads_pt)
         if "grad_x" in T and "x_seq" in T:
-            gx = T["grad_x"].abs().mean(dim=1)
-            sal = gx.numpy().T
+            G = T["grad_x"].abs()  # (T, B, C)
+            X = T["x_seq"]         # (T, B, C)
+            if G.ndim != 3 or X.ndim != 3 or G.shape != X.shape:
+                raise ValueError(f"[plot_all] Expected grad_x and x_seq to be 3D (T,B,C) with same shape. "
+                                f"Got grad_x={tuple(G.shape)}, x_seq={tuple(X.shape)}")
+
+            # Determine which channels are actually used
+            C = G.shape[-1]
+            keep = min(17, C)  # safe if a task has fewer channels
+            active_mask = np.zeros(C, dtype=bool)
+            active_mask[:keep] = True   # <-- set them to True
+            C_total = G.shape[-1]
+            C_kept = int(active_mask.sum())
+            if C_kept < C_total:
+                print(f"[plot_all] Saliency: cropping {C_total - C_kept} inactive channels "
+                    f"(kept {C_kept}/{C_total}).")
+
+            # Default single saliency map: mean across batch -> (T,C) -> (C,T)
+            sal = G.mean(dim=1).transpose(0, 1).contiguous().cpu().numpy()
+            sal = sal[active_mask, :]   # crop here as well
 
             if "dec_mask" in T:
-                dm = T["dec_mask"].bool()
-                w_dec = dm.float().mean(dim=1, keepdim=True)
-                w_fix = (~dm).float().mean(dim=1, keepdim=True)
-                gx_dec = (T["grad_x"].abs() * dm.unsqueeze(-1)).sum(dim=1) / (w_dec + 1e-12)
-                gx_fix = (T["grad_x"].abs() * (~dm).unsqueeze(-1)).sum(dim=1) / (w_fix + 1e-12)
+                dm = T["dec_mask"].bool()  # (T, B)
+                if dm.shape[:2] != G.shape[:2]:
+                    raise ValueError(f"[plot_all] dec_mask shape {tuple(dm.shape)} incompatible with grad_x {tuple(G.shape)}")
+
+                # Counts per time across batch (use SUM, not MEAN). Keep 2D to avoid adding a 3rd dim later.
+                w_dec = dm.sum(dim=1, keepdim=True).clamp_min(1)      # (T,1)
+                w_fix = (~dm).sum(dim=1, keepdim=True).clamp_min(1)   # (T,1)
+
+                # Average over the relevant frames -> (T,C)
+                gx_dec_T_C = (G * dm.unsqueeze(-1)).sum(dim=1) / w_dec
+                gx_fix_T_C = (G * (~dm).unsqueeze(-1)).sum(dim=1) / w_fix
+
+                # Transpose to (C,T) for imshow and crop to active channels
+                left  = gx_fix_T_C.transpose(0, 1).contiguous().cpu().numpy()[active_mask, :]
+                right = gx_dec_T_C.transpose(0, 1).contiguous().cpu().numpy()[active_mask, :]
+
                 plot_saliency_two(
-                    left=gx_fix.numpy().T,
-                    right=gx_dec.numpy().T,
+                    left=left,
+                    right=right,
                     outpath=figs_dir / "saliency.png",
+                    left_title="Fixation",
+                    right_title="Decision",
                 )
+
             else:
                 plot_saliency_single(
                     sal_map=sal,
@@ -265,7 +344,6 @@ def main():
     else:
         print(f"[plot_all] Missing {grads_pt} → skipping saliency", file=sys.stderr)
 
-    print(f"[plot_all] Wrote figures to {figs_dir}")
 
 if __name__ == "__main__":
     main()
