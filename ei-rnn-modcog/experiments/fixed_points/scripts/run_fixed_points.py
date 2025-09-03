@@ -1,7 +1,7 @@
+# experiments/fixed_points/scripts/run_fixed_points.py
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import tempfile
 from pathlib import Path
@@ -42,7 +42,7 @@ def _collect_rollout(
     env = env_fn()
     ds = Dataset(env, batch_size=batch, seq_len=seq_len, batch_first=True)
 
-    X, Y = ds() 
+    X, Y = ds()
     X = torch.from_numpy(X).to(device=device, dtype=torch.float32)
 
     if fix_ch >= 0 and X.shape[-1] > fix_ch:
@@ -53,18 +53,13 @@ def _collect_rollout(
         X[..., 0, rule_mem_ch] = 0.0
 
     with torch.no_grad():
-        x_last = X[:, -1, :]   
+        x_last = X[:, -1, :]
         pre = x_last @ model.W_xh.T + model.b_h
         H0 = F.softplus(pre)
 
     X_np = X.detach().cpu().numpy()
-    H0_np = H0.detach().cpu().numpy()             
+    H0_np = H0.detach().cpu().numpy()
     return X_np, H0_np
-
-
-def _save_npz(path: Path, **arrays):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(str(path), **arrays)
 
 
 def build_argparser() -> argparse.ArgumentParser:
@@ -85,10 +80,9 @@ def build_argparser() -> argparse.ArgumentParser:
 
 def main():
     THIS_FILE = Path(__file__).resolve()
-    PKG_ROOT  = THIS_FILE.parents[3] 
-    REPO_ROOT = THIS_FILE.parents[4]   
-
-    TRAINER_PY = PKG_ROOT / "base_scripts" / "train_singlehead_modcog.py"
+    # repo structure: ei-rnn-modcog/experiments/fixed_points/scripts/this_file.py
+    REPO_ROOT = THIS_FILE.parents[3]  # -> ei-rnn-modcog
+    TRAINER_PY = REPO_ROOT / "base_scripts" / "train_singlehead_modcog.py"
 
     args = build_argparser().parse_args()
     base_cfg = load_config(args.config)
@@ -120,33 +114,34 @@ def main():
 
     outdir_cfg = cfg.get("outdir", "outputs/fp_runs/default")
     if not os.path.isabs(outdir_cfg):
-        outdir_cfg = str((PKG_ROOT / outdir_cfg).resolve()) 
+        outdir_cfg = str((REPO_ROOT / outdir_cfg).resolve())
     cfg["outdir"] = outdir_cfg
 
-    outdir = get_outdir(cfg)  
+    outdir = get_outdir(cfg)
     run_dir = Path(outdir) / "run"
-    ckpt    = run_dir / "ckpt.pt"
+    ckpt = run_dir / "ckpt.pt"
 
-    print(f"[orchestrator] PKG_ROOT={PKG_ROOT}")
     print(f"[orchestrator] REPO_ROOT={REPO_ROOT}")
     print(f"[orchestrator] OUTDIR(abs)={outdir}")
     print(f"[orchestrator] RUN_DIR={run_dir}")
     print(f"[orchestrator] CKPT_EXPECTED={ckpt}")
 
-    with tempfile.NamedTemporaryFile(prefix="fp_", suffix=".yaml",
-                                     mode="w", encoding="utf-8", delete=False) as tmp:
-        yaml.safe_dump(cfg, tmp, sort_keys=False)
-        cfg_path_for_trainer = tmp.name
-
+    # Train if needed
     if not ckpt.exists():
+        with tempfile.NamedTemporaryFile(prefix="fp_", suffix=".yaml",
+                                         mode="w", encoding="utf-8", delete=False) as tmp:
+            yaml.safe_dump(cfg, tmp, sort_keys=False)
+            cfg_path_for_trainer = tmp.name
+
         print(f"[orchestrator] trainer={TRAINER_PY}")
         res = subprocess.run(
             [sys.executable, "-u", str(TRAINER_PY), "--config", cfg_path_for_trainer],
-            cwd=str(PKG_ROOT),
+            cwd=str(REPO_ROOT),
         )
         if res.returncode != 0:
             raise RuntimeError(f"Trainer failed with exit code {res.returncode}")
 
+    # Normalize checkpoint filename if trainer used a different name
     if not ckpt.exists():
         candidates = [
             run_dir / "checkpoint.pt",
@@ -172,13 +167,14 @@ def main():
                 "Verify the trainer saves to <outdir>/run/ckpt.pt or one of the common names."
             )
 
+    # Collect rollout seeds (once); then solve & optionally plot
+    device = _device(cfg.get("device", "auto"))
     fp_cfg = cfg.get("fixed_points", {})
     eval_subdir = fp_cfg.get("eval", {}).get("outdir", "eval/fixed_points")
     eval_dir = run_dir / eval_subdir
     seeds_file = eval_dir / "rollout_seeds.npz"
     eval_dir.mkdir(parents=True, exist_ok=True)
 
-    device = _device(cfg.get("device", "auto"))
     if not seeds_file.exists():
         model, _saved = rebuild_model_from_ckpt(ckpt, device=device)
         task = cfg.get("tasks", ["dm1"])[0]
@@ -189,24 +185,27 @@ def main():
             rollout_cfg=fp_cfg.get("rollout", {}),
             device=device,
         )
-        _save_npz(seeds_file, X=X_np, H0=H0_np)
+        np.savez_compressed(str(seeds_file), X=X_np, H0=H0_np)
         print(f"[orchestrator] wrote seeds → {seeds_file}")
 
+    # Solve
     res = subprocess.run(
         [sys.executable, "-u", "-m",
          "experiments.fixed_points.scripts.unified_fixed_points",
          "--run", str(run_dir),
-         "--config", cfg_path_for_trainer],
+         "--config", args.config],
         cwd=str(REPO_ROOT),
     )
     if res.returncode != 0:
         raise RuntimeError(f"Analysis failed with exit code {res.returncode}")
 
+    # Plot
     if args.plot:
         res = subprocess.run(
             [sys.executable, "-u", "-m",
              "experiments.fixed_points.scripts.plot_fixed_points",
-             "--run", str(run_dir)],
+             "--run", str(run_dir),
+             "--config", args.config],
             cwd=str(REPO_ROOT),
         )
         if res.returncode != 0:

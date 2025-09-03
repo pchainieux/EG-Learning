@@ -1,72 +1,105 @@
+# experiments/fixed_points/scripts/plot_fixed_points.py
 from __future__ import annotations
-ax.set_xlabel('PC1(mem)'); ax.set_ylabel('PC2(mem)'); ax.set_zlabel(f'logit[{z_logit}]')
-ax.set_title('PC1–PC2 vs output (z)')
-ax.legend(loc='best')
+
+import argparse
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from experiments.fixed_points.src.config import load_config
 
 
-# Panel B: ring plane with angles & circular variance
-ax2 = fig.add_subplot(2, 2, 2)
-if P is not None:
-proj = (H - H.mean(axis=0)) @ P
-ang = np.arctan2(proj[:, 1], proj[:, 0])
-sc = ax2.scatter(proj[:, 0], proj[:, 1], c=ang, s=14, cmap='twilight')
-z = np.exp(1j * ang); V_circ = 1 - np.abs(z.mean())
-ax2.set_title(f'Ring plane (V_circ={V_circ:.2f})')
-plt.colorbar(sc, ax=ax2, label='angle θ')
-else:
-ax2.set_title('Ring plane (insufficient points)')
-ax2.axhline(0, lw=0.5, c='k'); ax2.axvline(0, lw=0.5, c='k')
-ax2.set_xlabel('PC1'); ax2.set_ylabel('PC2')
+def _ensure_dir(p: Path) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
 
 
-# Panel C: histogram of margins
-ax3 = fig.add_subplot(2, 2, 3)
-ax3.hist(summary['margin'].values, bins=30)
-ax3.set_xlabel('1 − ρ(J)'); ax3.set_ylabel('count'); ax3.set_title('Margins')
+def plot_hist_rho(df: pd.DataFrame, out_png: Path):
+    plt.figure()
+    plt.hist(df["rho"].values, bins=30)
+    plt.xlabel("spectral radius ρ(J)")
+    plt.ylabel("count")
+    plt.title("Distribution of spectral radii")
+    _ensure_dir(out_png)
+    plt.savefig(out_png, dpi=200)
+    plt.close()
 
 
-# Panel D: motif counts
-ax4 = fig.add_subplot(2, 2, 4)
-order = ["stable", "saddle", "rotational", "continuous", "unstable"]
-counts = summary['label'].value_counts().reindex(order).fillna(0)
-ax4.bar(np.arange(len(order)), counts.values)
-ax4.set_xticks(np.arange(len(order))); ax4.set_xticklabels(order, rotation=20)
-ax4.set_ylabel('count'); ax4.set_title('Motifs')
+def plot_stability_bar(df: pd.DataFrame, out_png: Path):
+    plt.figure()
+    order = ["stable", "saddle", "rotational", "continuous", "unstable"]
+    counts = df["label"].value_counts().reindex(order).fillna(0)
+    plt.bar(np.arange(len(order)), counts.values)
+    plt.xticks(np.arange(len(order)), order, rotation=20)
+    plt.ylabel("count")
+    plt.title("Motif counts")
+    _ensure_dir(out_png)
+    plt.savefig(out_png, dpi=200)
+    plt.close()
 
 
-fig.tight_layout()
-_ensure_dir(out_png)
-fig.savefig(out_png, dpi=200)
-plt.close(fig)
+def plot_margin(df: pd.DataFrame, out_png: Path):
+    plt.figure()
+    plt.hist(df["margin"].values, bins=30)
+    plt.xlabel("1 − ρ(J)")
+    plt.ylabel("count")
+    plt.title("Margins")
+    _ensure_dir(out_png)
+    plt.savefig(out_png, dpi=200)
+    plt.close()
 
 
+def plot_residuals(df: pd.DataFrame, out_png: Path):
+    plt.figure()
+    plt.hist(df["residual"].values, bins=30)
+    plt.xlabel("||F(h*) − h*||²")
+    plt.ylabel("count")
+    plt.title("Residuals at fixed points")
+    _ensure_dir(out_png)
+    plt.savefig(out_png, dpi=200)
+    plt.close()
+
+
+def plot_unit_proximity(eigvals_obj: np.ndarray, out_png: Path):
+    # eigvals is an object-array of 1D arrays; flatten magnitudes and plot |λ|-1
+    mags = []
+    for arr in eigvals_obj:
+        if arr is None:
+            continue
+        mags.extend(np.abs(np.asarray(arr)).ravel().tolist())
+    mags = np.asarray(mags, dtype=float)
+    plt.figure()
+    plt.hist(np.abs(mags) - 1.0, bins=50)
+    plt.xlabel("|λ| - 1")
+    plt.ylabel("count")
+    plt.title("Eigenvalue distance to unit circle")
+    _ensure_dir(out_png)
+    plt.savefig(out_png, dpi=200)
+    plt.close()
 
 
 def main():
-args = build_parser().parse_args()
-run_dir = Path(args.run)
-cfg = load_config(args.config)
-eval_dir = run_dir / cfg.get("fixed_points", {}).get("eval", {}).get("outdir", "eval/fixed_points")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--run", type=str, required=True)
+    ap.add_argument("--config", type=str, required=True)
+    args = ap.parse_args()
 
+    run_dir = Path(args.run)
+    cfg = load_config(args.config)
+    eval_dir = run_dir / cfg.get("fixed_points", {}).get("eval", {}).get("outdir", "eval/fixed_points")
 
-df = pd.read_csv(eval_dir / "summary.csv")
-fp = np.load(str(eval_dir / "fixed_points.npz"), allow_pickle=True)
+    df = pd.read_csv(eval_dir / "summary.csv")
+    fp = np.load(str(eval_dir / "fixed_points.npz"), allow_pickle=True)
 
+    plot_hist_rho(df, eval_dir / "rho_hist.png")
+    plot_stability_bar(df, eval_dir / "stability_bar.png")
+    plot_margin(df, eval_dir / "margin_hist.png")
+    plot_residuals(df, eval_dir / "residual_hist.png")
+    plot_unit_proximity(fp["eigvals"], eval_dir / "unit_proximity.png")
 
-plot_hist_rho(df, eval_dir / "rho_hist.png")
-plot_stability_bar(df, eval_dir / "stability_bar.png")
-plot_margin(df, eval_dir / "margin_hist.png")
-plot_rotational(df, eval_dir / "rotational_scatter.png")
-plot_residuals(df, eval_dir / "residual_hist.png")
-plot_unit_proximity(fp["eigvals"], eval_dir / "unit_proximity.png")
-
-
-# Four-panel context figure
-four_panel_figure(run_dir, cfg, eval_dir / "four_panel.png")
-print(f"[plot_fixed_points] wrote figures to {eval_dir}")
-
-
+    print(f"[plot_fixed_points] wrote figures to {eval_dir}")
 
 
 if __name__ == "__main__":
-main()
+    main()
