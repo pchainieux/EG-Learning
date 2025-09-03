@@ -39,11 +39,11 @@ def _common_edges(values: np.ndarray, bins: int, xlim: Optional[Tuple[float,floa
 def plot_whh_distribution(W_hh, sign_vec, outpath: str, *, bins: int = 150,
                           xlim: Optional[Tuple[float,float]] = None,
                           smooth_sigma_bins: float = 1.5,
-                          density: bool = True,
+                          density: bool = False,
                           reflect_inhibitory: bool = True,
                           draw_medians: bool = True,
                           draw_means: bool = False,
-                          title: Optional[str] = "Recurrent weights distribution (columns)"):
+                          title: Optional[str] = None):
     W = np.asarray(W_hh, dtype=float)
     H = W.shape[0]
     s = np.asarray(sign_vec, dtype=float).reshape(-1) if sign_vec is not None else np.ones(H)
@@ -56,7 +56,7 @@ def plot_whh_distribution(W_hh, sign_vec, outpath: str, *, bins: int = 150,
         i_vals = -np.abs(inh_cols)
         max_mag = float(np.max(np.abs(np.concatenate([e_vals, -i_vals]))) if (e_vals.size or i_vals.size) else 1.0)
         x_lo, x_hi = -max_mag, max_mag
-        xlabel = "signed magnitude (I reflected)"
+        xlabel = "Signed magnitude"
     else:
         e_vals = exc_cols
         i_vals = inh_cols
@@ -65,7 +65,7 @@ def plot_whh_distribution(W_hh, sign_vec, outpath: str, *, bins: int = 150,
         else:
             vmax = float(np.percentile(np.abs(np.concatenate([e_vals, i_vals])), 99.5)) if (e_vals.size or i_vals.size) else 1.0
             x_lo, x_hi = -vmax, vmax
-        xlabel = "weight"
+        xlabel = "Weight"
 
     edges = np.linspace(x_lo, x_hi, int(bins) + 1)
     centers = 0.5 * (edges[1:] + edges[:-1])
@@ -126,7 +126,7 @@ def plot_whh_distribution(W_hh, sign_vec, outpath: str, *, bins: int = 150,
                 bbox=dict(fc="white", ec="0.85", boxstyle="round,pad=0.35"))
 
     ax.set_xlabel(xlabel)
-    ax.set_ylabel("density" if density else "count")
+    ax.set_ylabel("Density" if density else "Count")
     if title:
         ax.set_title(title)
 
@@ -142,16 +142,14 @@ def plot_whh_heatmap_observed(
     sign_vec,
     outpath: str,
     *,
-    title: str = "$W_{hh}$ heatmap (observed order)",
+    title: str = "",
     cmap: str = "RdBu_r",
     strip_size: str = "6%",
-    strip_pad: float = 0.10, 
-    cb_size: str = "3.5%", 
-    cb_pad: float = 0.10, 
-):
-    import numpy as np
-    import matplotlib.pyplot as plt
-
+    strip_pad: float = 0.10,
+    cb_size: str = "3.5%",
+    cb_pad: float = 0.10,
+    show_row_strip: bool = False,
+    swap_top_colors: bool = True,):
     W = np.asarray(W_hh, dtype=float)
     H = W.shape[0]
     s = np.asarray(sign_vec, dtype=float).reshape(-1) if sign_vec is not None else np.ones(H)
@@ -167,36 +165,39 @@ def plot_whh_heatmap_observed(
         interpolation="nearest", origin="upper",
         extent=[-0.5, H-0.5, H-0.5, -0.5],
     )
-    ax.set_xlabel("pre-synaptic (column)", labelpad=10, fontsize=12)
-    ax.set_ylabel("post-synaptic (row)")
+    ax.set_xlabel("Pre synaptic units", labelpad=10, fontsize=12)
+    if show_row_strip:
+        ax.set_ylabel("")
+    else:
+        ax.set_ylabel("Post synaptic units", fontsize=12)
     if title:
         ax.set_title(title, pad=8)
 
     divider = make_axes_locatable(ax)
 
+    cm_top = ListedColormap([EG_COLOR, GD_COLOR]) if swap_top_colors \
+             else ListedColormap([GD_COLOR, EG_COLOR]) 
     ax_top = divider.append_axes("top", size=strip_size, pad=strip_pad, sharex=ax)
-    col_vals = ((s > 0).astype(int))[None, :] 
-    cm = ListedColormap([GD_COLOR, EG_COLOR])
+    col_vals = ((s > 0).astype(int))[None, :]  
     ax_top.imshow(
-        col_vals, aspect="auto", interpolation="nearest", cmap=cm, vmin=0, vmax=1,
+        col_vals, aspect="auto", interpolation="nearest", cmap=cm_top, vmin=0, vmax=1,
         origin="upper", extent=[-0.5, H-0.5, 0, 1],
     )
+    ax_top.set_xticks([]); ax_top.set_yticks([])
+    for sp in ax_top.spines.values(): sp.set_visible(False)
 
-    ax_left = divider.append_axes("left", size=strip_size, pad=strip_pad, sharey=ax)
-    row_vals = ((s > 0).astype(int))[:, None]
-    ax_left.imshow(
-        row_vals, aspect="auto", interpolation="nearest", cmap=cm, vmin=0, vmax=1,
-        origin="upper", extent=[0, 1, H-0.5, -0.5],
-    )
-
-    for a in (ax_top, ax_left):
-        a.set_xticks([]); a.set_yticks([])
-        for sp in a.spines.values(): 
-            sp.set_visible(False)
-
-    ax.set_ylabel("")  
-    ax_left.set_ylabel("post-synaptic (row)", rotation=90, labelpad=10, fontsize=12)
-    ax_left.yaxis.set_label_position("left")
+    if show_row_strip:
+        cm_left = ListedColormap([GD_COLOR, EG_COLOR]) 
+        ax_left = divider.append_axes("left", size=strip_size, pad=strip_pad, sharey=ax)
+        row_vals = ((s > 0).astype(int))[:, None]  
+        ax_left.imshow(
+            row_vals, aspect="auto", interpolation="nearest", cmap=cm_left, vmin=0, vmax=1,
+            origin="upper", extent=[0, 1, H-0.5, -0.5],
+        )
+        ax_left.set_xticks([]); ax_left.set_yticks([])
+        for sp in ax_left.spines.values(): sp.set_visible(False)
+        ax_left.set_ylabel("Post-synaptic", rotation=90, labelpad=10, fontsize=12)
+        ax_left.yaxis.set_label_position("left")
 
     cax = divider.append_axes("right", size=cb_size, pad=cb_pad)
     cbar = fig.colorbar(im, cax=cax)
@@ -215,7 +216,7 @@ def _split_by_sign(values_1d: np.ndarray, sign_vec: np.ndarray):
 
 def plot_row_col_sums(W_hh, sign_vec, outpath: str, *, bins: int = 120,
                       smooth_sigma_bins: float = 1.0, density: bool = True,
-                      title: Optional[str] = "Row vs Column sums of $W_{hh}$"):
+                      title: Optional[str] = None):
     W = np.asarray(W_hh, dtype=float)
     s = np.asarray(sign_vec, dtype=float).reshape(-1)
     row_sums = W.sum(axis=1) 
@@ -240,13 +241,13 @@ def plot_row_col_sums(W_hh, sign_vec, outpath: str, *, bins: int = 120,
     h_er = _h(e_rows); h_ir = _h(i_rows)
     axes[0].plot(centers, h_er, lw=2.2, color=EG_COLOR, label="E rows")
     axes[0].plot(centers, h_ir, lw=2.2, color=GD_COLOR, label="I rows")
-    axes[0].set_xlabel("row sum (incoming)"); axes[0].set_ylabel("density" if density else "count")
+    axes[0].set_xlabel("Row sum"); axes[0].set_ylabel("Density" if density else "Count")
     axes[0].legend(frameon=False)
 
     h_ec = _h(e_cols); h_ic = _h(i_cols)
     axes[1].plot(centers, h_ec, lw=2.2, color=EG_COLOR, label="E cols")
     axes[1].plot(centers, h_ic, lw=2.2, color=GD_COLOR, label="I cols")
-    axes[1].set_xlabel("column sum (outgoing)"); axes[1].legend(frameon=False)
+    axes[1].set_xlabel("Column sum"); axes[1].legend(frameon=False)
 
     if title:
         axes[0].set_title(title)
@@ -255,7 +256,7 @@ def plot_row_col_sums(W_hh, sign_vec, outpath: str, *, bins: int = 120,
     fig.savefig(outpath.replace(".png", ".pdf"), dpi=300, bbox_inches="tight")
     plt.close(fig)
 
-def plot_spectrum(W_hh, outpath: str, *, title: Optional[str] = "Spectrum of $W_{hh}$"):
+def plot_spectrum(W_hh, outpath: str, *, title: Optional[str] = None):
     W = np.asarray(W_hh, dtype=float)
     eigs = np.linalg.eigvals(W)
     fig, ax = plt.subplots(figsize=(5.2, 5.2))
@@ -278,7 +279,7 @@ def plot_spectrum(W_hh, outpath: str, *, title: Optional[str] = "Spectrum of $W_
     fig.savefig(outpath.replace(".png", ".pdf"), dpi=300, bbox_inches="tight")
     plt.close(fig)
 
-def plot_whh_heatmap(W_hh, sign_vec, outpath: str, *, title: Optional[str] = "$W_{hh}$ heatmap", reorder_by_sign: bool = True):
+def plot_whh_heatmap(W_hh, sign_vec, outpath: str, *, title: Optional[str] = None , reorder_by_sign: bool = True):
     W = np.asarray(W_hh, dtype=float)
     H = W.shape[0]
     s = np.asarray(sign_vec, dtype=float).reshape(-1) if sign_vec is not None else np.ones(H)
@@ -294,7 +295,7 @@ def plot_whh_heatmap(W_hh, sign_vec, outpath: str, *, title: Optional[str] = "$W
     fig, ax = plt.subplots(figsize=(6.4, 5.6))
     _set_pub_style(ax)
     im = ax.imshow(W, cmap="RdBu_r", vmin=vmin, vmax=vmax, interpolation="nearest", origin="upper")
-    ax.set_xlabel("pre-synaptic (column)"); ax.set_ylabel("post-synaptic (row)")
+    ax.set_xlabel("Pre-synaptic (column)"); ax.set_ylabel("Post-synaptic (row)")
     if title:
         ax.set_title(title)
 

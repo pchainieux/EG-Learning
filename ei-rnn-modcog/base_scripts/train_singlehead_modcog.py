@@ -11,7 +11,7 @@ from src.analysis import viz_training as viz
 from src.models.ei_rnn import EIRNN, EIConfig
 from src.optim.sgd_eg import SGD_EG
 from src.utils.seeding import set_seed_all, pick_device, device_name
-from src.training.losses import ModCogLossCombined, decision_mask_from_inputs
+from src.training.losses import ModCogLossCombined, decision_mask_from_inputs, row_sum_penalty
 from src.training.metrics import accuracy_with_fixation
 
 
@@ -132,6 +132,17 @@ def main():
     train     = cfg.get("train", {})
     viz_cfg   = cfg.get("viz", {}) or {}
 
+
+    row_cfg = train.get("row_sum_zero", False)
+    if isinstance(row_cfg, bool):
+        row_enabled = row_cfg
+        row_weight  = float(train.get("row_sum_weight", 0.0))
+        row_per_sign = True
+    else:
+        row_enabled  = bool(row_cfg.get("enabled", True))
+        row_weight   = float(row_cfg.get("weight", 0.05))
+        row_per_sign = bool(row_cfg.get("per_sign", True))
+
     seq_len   = int(data.get("seq_len", 350))
     batch_sz  = int(data.get("batch_size", 128))
 
@@ -240,6 +251,9 @@ def main():
             logits = model(X_in) 
 
             loss, _, _ = crit(logits, Y, dec_mask)
+            if row_enabled and row_weight > 0.0:
+                rs = row_sum_penalty(model.W_hh, getattr(model, "sign_vec", None), per_sign=row_per_sign)
+                loss = loss + row_weight * rs
             opt.zero_grad(set_to_none=True); loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             opt.step()

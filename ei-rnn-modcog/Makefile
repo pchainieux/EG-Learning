@@ -23,167 +23,78 @@ eigrad-plots:
 
 eigrad-all: eigrad-collect eigrad-metrics eigrad-plots
 
-# =========================================================
-# FIXED-POINTS PIPELINE
-# =========================================================
+# ================================
+# SIMPLE FIXED-POINTS PIPELINE
+# ================================
 
-FP_RUN_ROOT    ?= outputs/runs
-FP_EXP         ?= ei_pI
+FP_CFG        ?= configs/fixed_points/fixed_points.yaml
 
-OPTIMS         ?= eg gd
-PIs            ?= 0.20 0.35 0.50 0.65
-SEEDS          ?= 0 1 2 3 4
+FP_RUN_ROOT   ?= outputs/fp_runs
+FP_EXP        ?= inh_sweep
+INH           ?= 0.10 0.20 0.30
 
-TASK           ?= dm1
-HIDDEN         ?= 256
-EPOCHS         ?= 10
-STEPS          ?= 500
-LR_EG          ?= 1.5
-LR_GD          ?= 0.01
-DEVICE         ?= auto
+SEED          ?= 1
+EPOCHS        ?= 5
+STEPS         ?= 200
+ONE_FP_SEED   ?= 1   # 1 → pass --one-fp-seed
 
-CTX            ?= memory anti
-FP_N_INIT      ?= 512
-FP_TOL         ?= 1e-6
-FP_MAX_IT      ?= 800
-FP_SEQ_LEN     ?= 350
-FP_BATCH       ?= 512
-
-K_SLOW         ?= 4
-M_OVERLAP      ?= 3
-
-ALPHA_I        ?= 0.5 0.75 1.0 1.25 1.5
-NOISE_STD      ?= 0.0 0.1 0.2
-ROB_SEQ_LEN    ?= 350
-ROB_BATCH      ?= 128
-
-SUMMARY_CSV    := $(FP_RUN_ROOT)/$(FP_EXP)/summary.csv
-FIGS_DIR       := $(FP_RUN_ROOT)/$(FP_EXP)/figs
-
-FP_DIR := experiments/fixed_points
+EXP_DIR       := $(FP_RUN_ROOT)/$(FP_EXP)
+SUMMARY_CSV   := $(EXP_DIR)/summary_all.csv
 
 define banner
 	@printf "\n\033[1;36m==> %s\033[0m\n" "$(1)"
 endef
 
-.PHONY: fp-all fp-deps fp-train fp-fixedpoints fp-analyze fp-robustness fp-aggregate fp-plots fp-ringplots fp-list fp-runs fp-clean
+.PHONY: fp-all fp-sweep fp-aggregate fp-list fp-clean
 
-fp-all: fp-deps fp-train fp-fixedpoints fp-analyze fp-robustness fp-aggregate fp-plots
+fp-all: fp-sweep fp-aggregate fp-plots
 
-fp-deps:
-	$(call banner,Checking Python deps)
-	@$(PY) -c "import importlib.util as u, subprocess, sys; req=['loguru']; \
-missing=[r for r in req if u.find_spec(r) is None]; \
-subprocess.check_call([sys.executable,'-m','pip','install','-q']+missing) if missing else print('OK')"
-
-fp-train:
-	$(call banner,TRAIN → $(FP_RUN_ROOT)/$(FP_EXP))
+# Train + analyze + plot per inhibitory fraction
+fp-sweep:
+	$(call banner,SWEEP inhibitory fractions → $(EXP_DIR))
+	@mkdir -p "$(EXP_DIR)"
 	@set -euo pipefail; \
-	for o in $(OPTIMS); do \
-	  for p in $(PIs); do \
-	    for s in $(SEEDS); do \
-	      seedp=$$(printf "%03d" $$s); \
-	      outdir="$(FP_RUN_ROOT)/$(FP_EXP)/$$o/pI=$$p/seed=$$seedp"; \
-	      mkdir -p "$$outdir"; \
-	      echo "[train] $$outdir"; \
-	      $(PY) "$(FP_DIR)/train.py" \
-	        --optim $$o \
-	        --pI $$p \
-	        --seed $$s \
-	        --task $(TASK) \
-	        --hidden $(HIDDEN) \
-	        --epochs $(EPOCHS) \
-	        --steps $(STEPS) \
-	        --seq_len $(FP_SEQ_LEN) \
-	        --batch $(FP_BATCH) \
-	        --lr_eg $(LR_EG) \
-	        --lr_gd $(LR_GD) \
-	        --device $(DEVICE) \
-	        --outdir "$$outdir"; \
-	    done; \
-	  done; \
+	for inh in $(INH); do \
+	  outdir="$(EXP_DIR)/inh_$${inh}"; \
+	  echo "[run] inh=$$inh  outdir=$$outdir"; \
+	  extra=""; \
+	  if [ "$(ONE_FP_SEED)" = "1" ]; then extra="--one-fp-seed"; fi; \
+	  $(PYTHON) -m experiments.fixed_points.scripts.run_fixed_points \
+	    --config $(FP_CFG) \
+	    --outdir "$$outdir" \
+	    --inh $$inh \
+	    --seed $(SEED) \
+	    --epochs $(EPOCHS) \
+	    --steps-per-epoch $(STEPS) \
+	    $$extra \
+	    --plot; \
 	done
 
-define _for_each_run
-set -euo pipefail; \
-runs=$$(find "$(FP_RUN_ROOT)/$(FP_EXP)" -type d -name 'seed=*' | sort); \
-if [ -z "$$runs" ]; then echo "No runs found under $(FP_RUN_ROOT)/$(FP_EXP)"; exit 0; fi; \
-for run in $$runs; do \
-  echo "$(1) $$run"; \
-  $(2); \
-done
-endef
-
-fp-fixedpoints:
-	$(call banner,FIXED POINTS)
-	@$(call _for_each_run,[fp], \
-	$(PY) "$(FP_DIR)/fixed_point_finder.py" \
-	  --run "$$run" \
-	  --contexts $(CTX) \
-	  --n_init $(FP_N_INIT) \
-	  --tol $(FP_TOL) \
-	  --max_iter $(FP_MAX_IT) \
-	  --seq_len $(FP_SEQ_LEN) \
-	  --batch $(FP_BATCH) \
-	  --task $(TASK) \
-	  --device cpu)
-
-fp-analyze:
-	$(call banner,MOTIF ANALYSIS)
-	@$(call _for_each_run,[analyze], \
-	$(PY) "$(FP_DIR)/analyze_motifs.py" \
-	  --run "$$run" \
-	  --contexts $(CTX) \
-	  --k_slow $(K_SLOW) \
-	  --m_overlap $(M_OVERLAP))
-
-fp-robustness:
-	$(call banner,ROBUSTNESS)
-	@$(call _for_each_run,[robust], \
-	$(PY) "$(FP_DIR)/robustness_tests.py" \
-	  --run "$$run" \
-	  --task $(TASK) \
-	  --alphaI $(ALPHA_I) \
-	  --noise_std $(NOISE_STD) \
-	  --seq_len $(ROB_SEQ_LEN) \
-	  --batch $(ROB_BATCH) \
-	  --device cpu)
-
+# Concatenate all per-run summary.csv into one CSV (calls a tiny Python module)
 fp-aggregate:
 	$(call banner,AGGREGATE → $(SUMMARY_CSV))
 	@mkdir -p "$(dir $(SUMMARY_CSV))"
-	@$(PY) "$(FP_DIR)/aggregate_results.py" --root "$(FP_RUN_ROOT)/$(FP_EXP)" --out "$(SUMMARY_CSV)"
-
-fp-plots:
-	$(call banner,PLOTS → $(FIGS_DIR))
-	@mkdir -p "$(FIGS_DIR)"
-	@$(PY) "$(FP_DIR)/plot_reports.py" --summary "$(SUMMARY_CSV)" --outdir "$(FIGS_DIR)"
-
-fp-ringplots:
-	$(call banner,RING FIXED-POINT PANELS)
-	@$(call _for_each_run,[ringplot], \
-	$(PY) "$(FP_DIR)/plot_ring_fixed_points.py" \
-	  --run "$$run" \
-	  --contexts $(CTX) \
-	  --seq_len $(FP_SEQ_LEN) \
-	  --batch $(FP_BATCH) \
-	  --task $(TASK) \
-	  --fixation_channel 0 \
-	  --mask_threshold 0.5 \
-	  --z_mode logit)
+	@$(PYTHON) -m experiments.fixed_points.scripts.aggregate --root "$(EXP_DIR)" --out "$(SUMMARY_CSV)"
 
 fp-list:
-	@printf "Runs under %s:\n" "$(FP_RUN_ROOT)/$(FP_EXP)"; \
-	find "$(FP_RUN_ROOT)/$(FP_EXP)" -type d -name 'seed=*' | sort || true
-
-fp-runs: fp-list
+	@echo "Runs under $(EXP_DIR):"
+	@find "$(EXP_DIR)" -type f -name ckpt.pt -printf '%h\n' | sort || true
 
 fp-clean:
-	$(call banner,CLEAN $(FP_RUN_ROOT)/$(FP_EXP))
-	@rm -rf "$(FP_RUN_ROOT)/$(FP_EXP)"
+	$(call banner,CLEAN $(EXP_DIR))
+	@rm -rf "$(EXP_DIR)"
 
-.PHONY: all help
-all: eigrad-all fp-all
+.PHONY: fp-plots
+fp-plots:
+	$(call banner,PLOTS per run)
+	@set -euo pipefail; \
+	hits=$$(find "$(FP_RUN_ROOT)/$(FP_EXP)" -type f -name ckpt.pt 2>/dev/null | sort); \
+	if [ -z "$$hits" ]; then echo "No runs found under $(FP_RUN_ROOT)/$(FP_EXP)"; exit 0; fi; \
+	for ck in $$hits; do \
+	  run=$$(dirname "$$ck"); \
+	  echo "[plot] $$run"; \
+	  $(PYTHON) -m experiments.fixed_points.scripts.plot_fixed_points --run "$$run"; \
+	done
 
 help:
 	@echo "Targets:"

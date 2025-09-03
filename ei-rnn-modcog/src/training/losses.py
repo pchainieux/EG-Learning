@@ -1,6 +1,24 @@
 from __future__ import annotations
 import torch
 import torch.nn as nn
+from typing import Optional
+
+def row_sum_penalty(W_hh: torch.Tensor, sign_vec: Optional[torch.Tensor] = None, *, per_sign: bool = True, reduction: str = "mean",) -> torch.Tensor:
+    if (sign_vec is None) or (not per_sign):
+        vals = W_hh.sum(dim=1).pow(2) 
+    else:
+        s = sign_vec.reshape(1, -1).to(dtype=W_hh.dtype, device=W_hh.device)
+        e_mask = (s > 0).to(W_hh.dtype)
+        i_mask = (s < 0).to(W_hh.dtype)
+        row_e = (W_hh * e_mask).sum(dim=1)
+        row_i = (W_hh * i_mask).sum(dim=1)
+        vals = row_e.pow(2) + row_i.pow(2)
+
+    if reduction == "mean":
+        return vals.mean()
+    if reduction == "sum":
+        return vals.sum()
+    return vals
 
 @torch.no_grad()
 def decision_mask_from_inputs(X: torch.Tensor, thresh: float = 0.5) -> torch.Tensor:

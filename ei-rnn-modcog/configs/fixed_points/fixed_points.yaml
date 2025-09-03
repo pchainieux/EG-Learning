@@ -1,11 +1,56 @@
-run: outputs/runs/ei_pI/eg/pI=0.35/seed=000
-ckpt: "outputs/runs/smoke/eg/pI=0.35/seed=000/ckpt.pt"
-contexts: [memory, anti]
-n_init: 256
-tol: 1e-6
-max_iter: 500
-seq_len: 350
-batch: 256
-task: dm1
-device: cpu
+seed: 1
+outdir: outputs/fp_runs/    
+tasks: ["dm1"]             
 
+data:
+  source: cached
+  batch_size: 128
+  seq_len: 80
+
+model:
+  hidden_size: 256
+  exc_frac: 0.8
+  spectral_radius: 1.2
+  input_scale: 1.0
+  leak: 1
+  nonlinearity: softplus
+  readout: all
+  softplus_beta: 8.0
+  softplus_threshold: 20.0
+
+optim:
+  algorithm: gd 
+  gd:
+    lr_gd: 0.01
+    momentum: 0.9
+    weight_decay: 1e-5
+
+train:
+  num_epochs: 20
+  steps_per_epoch: 200
+  val_batches: 20
+  grad_clip: 1.0
+  input_noise_std: 0.0
+  fixdown_weight: 0.5
+  spectral_renorm_every: 0
+  mask_threshold: 0.5
+  task_sampling: round_robin
+  task_weights: []
+
+fixed_points:
+  enabled: true
+  rollout:
+    batch: 256
+    seq_len: 60
+    context_channels:
+      memory: 0         # fixation ON channel, if applicable
+      anti: -1          # anti channel index (optional)
+      rule_mem: -1      # rule/memory channel (optional)
+      stim: ""          # comma list of channels to zero for memory contexts
+  solver:
+    max_iter: 500
+    tol: 1e-6
+    alpha: 1.0
+  eval:
+    outdir: eval/fixed_points 
+    val_batches: 50   

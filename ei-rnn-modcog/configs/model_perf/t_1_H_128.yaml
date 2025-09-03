@@ -1,11 +1,11 @@
 seed: 1
 device: auto                  # 'auto', 'cpu', 'cuda'
-outdir: outputs/row_sum_test/          # create new folder if I want to save a specific experiment results
+outdir: outputs/final/model_perf/gd_t_1_H_128          # create new folder if I want to save a specific experiment results
 
-tasks: ["dm1"]                # e.g., ["dm1", "dms"]
+tasks: [dm1]                # e.g., ["dm1", "dms"]
 
 data:
-  source: cached             # "online", "cached"
+  source: online             # "online", "cached"
   batch_size: 128
   seq_len: 80
 
@@ -15,10 +15,10 @@ data:
     build_if_missing: true 
     seed: 7
     paths:                 
-      dm1: outputs/cache/dm1_fast.npz
+      dm1: outputs/cache/final_dm1.npz
 
 model:
-  hidden_size: 256
+  hidden_size: 128
   exc_frac: 0.8
   spectral_radius: 1.2
   input_scale: 1.0
@@ -29,7 +29,7 @@ model:
   softplus_threshold: 20.0
 
 optim:
-  algorithm: eg               # 'eg' (EG on W_hh + GD on others), 'gd' (GD everywhere)
+  algorithm: gd               # 'eg' (EG on W_hh + GD on others), 'gd' (GD everywhere)
   eg:
     lr: 0.2
     momentum: 0.0
@@ -42,7 +42,7 @@ optim:
 
 train:
   num_epochs: 20               # set to 20 
-  steps_per_epoch: 200       #  minibatches (online draw) per epoch
+  steps_per_epoch: 500       #  minibatches (online draw) per epoch
   val_batches: 20             # per task validation batches at epoch end
   grad_clip: 1.0
   input_noise_std: 0.0
@@ -53,6 +53,6 @@ train:
   task_weights: []            # used when task_sampling == 'random'; [] => uniform
 
   row_sum_zero:
-    enabled: true        # or false to turn off
+    enabled: false        # or false to turn off
     weight: 0.05         # try 0.01–0.1; tune per your scale
     per_sign: true       # penalize E and I row-sums separately
