@@ -3,9 +3,17 @@ outdir: outputs/fp_runs/
 tasks: ["dm1"]             
 
 data:
-  source: cached
+  source: cached             # "online" or "cached"
   batch_size: 128
   seq_len: 80
+
+  cache:
+    num_batches: 128
+    val_frac: 0.1
+    build_if_missing: true
+    seed: 7
+    paths:
+      dm1: outputs/cache/dm1_fast.npz 
 
 model:
   hidden_size: 256
@@ -38,19 +46,22 @@ train:
   task_weights: []
 
 fixed_points:
-  enabled: true
+  eps_unit: 0.03           # near-unit eigenvalue threshold
+  dedup_eps: 0.01          # DBSCAN radius (state space)
+  solver:
+    max_iter: 800
+    tol: 1e-6
+    alpha: 1.0             # step size for the h-optimizer (not the leak!)
+    backtrack_beta: 0.5
+    backtrack_c: 1e-4
   rollout:
     batch: 256
     seq_len: 60
     context_channels:
-      memory: 0         # fixation ON channel, if applicable
-      anti: -1          # anti channel index (optional)
-      rule_mem: -1      # rule/memory channel (optional)
-      stim: ""          # comma list of channels to zero for memory contexts
-  solver:
-    max_iter: 500
-    tol: 1e-6
-    alpha: 1.0
+      clamp: true          # clamp channels for all timesteps
+      memory: 0            # adjust indices to your env
+      anti: -1
+      rule_mem: -1
   eval:
-    outdir: eval/fixed_points 
-    val_batches: 50   
+    outdir: eval/fixed_points
+    z_logit: 0      
