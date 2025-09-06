@@ -158,6 +158,14 @@ fp-aggregate:
 		--root "$(FP_RUN_ROOT)/$(FP_EXP)" \
 		--out  "$(SUMMARY_CSV)"
 
+.PHONY: fp-fig-ring
+fp-fig-ring:
+	$(PYTHON) -m experiments.fixed_points.scripts.plot_ring_panels \
+		--single-run $(OUTDIR)/run \
+		--readout-index 0 \
+		--traj-steps 60 --n-traj 24 \
+		--outfile $(OUTDIR)/run/eval/fixed_points/ring_panel.png
+		
 # Re-plot figures for all runs under FP_RUN_ROOT/FP_EXP
 fp-plots:
 	@echo "[fp-plots] scanning $(FP_RUN_ROOT)/$(FP_EXP)"

@@ -215,6 +215,13 @@ def forward_collect(model: torch.nn.Module, batch: dict, return_states: bool):
 
     return logits, cache
 
+def _set_all_seeds(s: int):
+    import random, numpy as np, torch
+    random.seed(s); np.random.seed(s); torch.manual_seed(s); torch.cuda.manual_seed_all(s)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--cfg", type=str, required=True)
@@ -223,56 +230,16 @@ def main():
     cfg = load_yaml(args.cfg)
     out_dir = ensure_outdir(cfg["out_dir"], "grads")
 
-    seed = int(cfg.get("seed", 12345))
-    random.seed(seed); np.random.seed(seed); torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    seeds = cfg.get("seeds", None)
+    if seeds is None:
+        seeds = [int(cfg.get("seed", 12345))]
+    else:
+        seeds = [int(s) for s in seeds]
 
     device = cfg.get("device", "cpu")
     ckpt_path = cfg["checkpoint"]
+
     model, extra = build_model_and_load(ckpt_path, device)
-
-    if "S" in extra:
-        S = torch.tensor(extra["S"], dtype=torch.float32, device=device)
-        idx_E, idx_I = ei_indices_from_sign_matrix(S)
-    elif "signs" in extra:
-        s = extra["signs"].detach().clone().to(torch.int8).to(device).view(-1)        
-        if not torch.all((s == 1) | (s == -1)):
-            raise ValueError("Invalid 'signs' vector: must be ±1.")
-        idx_E = (s == 1)
-        idx_I = (s == -1)
-    else:
-        raise KeyError("Checkpoint must contain either 'S' (Dale columns) or 'signs' vector.")
-
-    loader = get_val_loader(cfg) 
-    data = next(loader)  
-
-    class _ModelAdapter(torch.nn.Module):
-        def __init__(self, base_model: torch.nn.Module):
-            super().__init__()
-            self.base = base_model
-        def forward(self, x, y=None, return_all=False):
-            logits, cache = forward_collect(self.base, {"x": x, "y": y}, return_states=True)
-            if return_all:
-                return {
-                    "loss": cache["loss"],
-                    "h_list": cache["h_list"],
-                    "u_list": cache.get("u_seq", None).unbind(dim=0) if "u_seq" in cache else None,
-                }
-            return logits
-
-    model_for_hooks = _ModelAdapter(model).to(device)
-
-    tensors = collect_hidden_and_grads(
-        model_for_hooks,
-        data,
-        device=device,
-        window=tuple(cfg.get("window", [None, None])) if cfg.get("window") else None,
-        stride=int(cfg.get("stride", 1)),
-        return_grad_x=bool(cfg.get("return_grad_x", True)),
-        fixation_channel=int(cfg.get("fixation_channel", 0)),
-        decision_thresh=float(cfg.get("decision_thresh", 0.5)),
-    )
 
     if "S" in extra:
         S = torch.tensor(extra["S"], dtype=torch.float32, device=device)
@@ -281,34 +248,58 @@ def main():
         s = extra["signs"].detach().clone().to(torch.int8).to(device).view(-1)
         if not torch.all((s == 1) | (s == -1)):
             raise ValueError("Invalid 'signs' vector: must be ±1.")
-        idx_E = (s == 1)
-        idx_I = (s == -1)
+        idx_E = (s == 1); idx_I = (s == -1)
     else:
-        raise KeyError("Checkpoint must contain either 'S' or 'signs'.")
+        raise KeyError("Checkpoint must contain either 'S' (Dale columns) or 'signs' vector.")
 
-    tensors["idx_E"] = idx_E.detach().cpu()
-    tensors["idx_I"] = idx_I.detach().cpu()
+    loader = get_val_loader(cfg)
 
-    h_seq = tensors["h_seq"]; g_h = tensors["grad_h"]
-    T, B, N = h_seq.shape
-    assert g_h.shape == (T, B, N), f"grad_h {g_h.shape} expected {(T,B,N)}"
-    assert idx_E.numel() == N and idx_I.numel() == N
+    write_single = (len(seeds) == 1)
 
-    if "grad_x" in tensors:
-        x_seq = tensors["x_seq"]; grad_x = tensors["grad_x"]
-        D = grad_x.shape[-1]
-        assert x_seq.shape == grad_x.shape == (T, B, D), \
-        f"x_seq {tuple(x_seq.shape)} and grad_x {tuple(grad_x.shape)} must both be (T,B,D)"
+    for seed in seeds:
+        _set_all_seeds(seed)
+        data = next(loader)
 
-    meta = {
-        "checkpoint": str(ckpt_path),
-        "seed": seed,
-        "device": device,
-    }
-    save_yaml(meta, out_dir / "meta.yaml")
-    save_tensors(tensors, out_dir / "grads.pt")
+        class _ModelAdapter(torch.nn.Module):
+            def __init__(self, base_model: torch.nn.Module):
+                super().__init__(); self.base = base_model
+            def forward(self, x, y=None, return_all=False):
+                logits, cache = forward_collect(self.base, {"x": x, "y": y}, return_states=True)
+                if return_all:
+                    return {
+                        "loss": cache["loss"],
+                        "h_list": cache["h_list"],
+                        "u_list": cache.get("u_seq", None).unbind(dim=0) if "u_seq" in cache else None,
+                    }
+                return logits
 
-    print(f"[collect_grads] Saved tensors to {out_dir / 'grads.pt'}")
+        model_for_hooks = _ModelAdapter(model).to(device)
+
+        tensors = collect_hidden_and_grads(
+            model_for_hooks, data, device=device,
+            window=tuple(cfg.get("window", [None, None])) if cfg.get("window") else None,
+            stride=int(cfg.get("stride", 1)),
+            return_grad_x=bool(cfg.get("return_grad_x", True)),
+            fixation_channel=int(cfg.get("fixation_channel", 0)),
+            decision_thresh=float(cfg.get("decision_thresh", 0.5)),
+        )
+
+        tensors["idx_E"] = idx_E.detach().cpu()
+        tensors["idx_I"] = idx_I.detach().cpu()
+
+        meta = {"checkpoint": str(ckpt_path), "seed": int(seed), "device": device}
+        if write_single:
+            pt_path = out_dir / "grads.pt"
+            meta_path = out_dir / "meta.yaml"
+        else:
+            pt_path = out_dir / f"grads_seed{seed:04d}.pt"
+            meta_path = out_dir / f"meta_seed{seed:04d}.yaml"
+
+        save_yaml(meta, meta_path)
+        save_tensors(tensors, pt_path)
+        print(f"[collect_grads] Saved tensors to {pt_path}")
+
+    print("[collect_grads] Done.")
 
 if __name__ == "__main__":
     main()

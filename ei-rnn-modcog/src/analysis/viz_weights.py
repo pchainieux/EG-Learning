@@ -125,8 +125,8 @@ def plot_whh_distribution(W_hh, sign_vec, outpath: str, *, bins: int = 150,
                 va="top", ha="left", fontsize=11,
                 bbox=dict(fc="white", ec="0.85", boxstyle="round,pad=0.35"))
 
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel("Density" if density else "Count")
+    ax.set_xlabel(xlabel, fontsize=14)
+    ax.set_ylabel("Density" if density else "Count", fontsize=14)
     if title:
         ax.set_title(title)
 
@@ -165,11 +165,11 @@ def plot_whh_heatmap_observed(
         interpolation="nearest", origin="upper",
         extent=[-0.5, H-0.5, H-0.5, -0.5],
     )
-    ax.set_xlabel("Pre synaptic units", labelpad=10, fontsize=12)
+    ax.set_xlabel("Pre synaptic units", labelpad=10, fontsize=16)
     if show_row_strip:
         ax.set_ylabel("")
     else:
-        ax.set_ylabel("Post synaptic units", fontsize=12)
+        ax.set_ylabel("Post synaptic units", fontsize=16)
     if title:
         ax.set_title(title, pad=8)
 
@@ -196,7 +196,7 @@ def plot_whh_heatmap_observed(
         )
         ax_left.set_xticks([]); ax_left.set_yticks([])
         for sp in ax_left.spines.values(): sp.set_visible(False)
-        ax_left.set_ylabel("Post-synaptic", rotation=90, labelpad=10, fontsize=12)
+        ax_left.set_ylabel("Post-synaptic", rotation=90, labelpad=10, fontsize=14)
         ax_left.yaxis.set_label_position("left")
 
     cax = divider.append_axes("right", size=cb_size, pad=cb_pad)
@@ -214,15 +214,17 @@ def _split_by_sign(values_1d: np.ndarray, sign_vec: np.ndarray):
     i = values_1d[sign_vec < 0]
     return e, i
 
-def plot_row_col_sums(W_hh, sign_vec, outpath: str, *, bins: int = 120,
-                      smooth_sigma_bins: float = 1.0, density: bool = True,
-                      title: Optional[str] = None):
+def plot_row_col_sums(
+    W_hh, sign_vec, outpath: str, *, bins: int = 120,
+    smooth_sigma_bins: float = 1.0, density: bool = True,
+    title: Optional[str] = None,
+    xlabel_fs: int = 14, ylabel_fs: int = 14, title_fs: int = 13,
+):
     W = np.asarray(W_hh, dtype=float)
     s = np.asarray(sign_vec, dtype=float).reshape(-1)
-    row_sums = W.sum(axis=1) 
-    col_sums = W.sum(axis=0) 
+    row_sums = W.sum(axis=1)
+    col_sums = W.sum(axis=0)
 
-    e_rows, i_rows = _split_by_sign(row_sums, s)
     e_cols, i_cols = _split_by_sign(col_sums, s)
 
     all_vals = np.concatenate([row_sums, col_sums]) if row_sums.size else np.array([0.0])
@@ -238,19 +240,20 @@ def plot_row_col_sums(W_hh, sign_vec, outpath: str, *, bins: int = 120,
         _set_pub_style(ax)
         ax.axvline(0.0, color=TARGET_COLOR, lw=1.0, ls=":")
 
-    h_er = _h(e_rows); h_ir = _h(i_rows)
-    axes[0].plot(centers, h_er, lw=2.2, color=EG_COLOR, label="E rows")
-    axes[0].plot(centers, h_ir, lw=2.2, color=GD_COLOR, label="I rows")
-    axes[0].set_xlabel("Row sum"); axes[0].set_ylabel("Density" if density else "Count")
+    h_rows = _h(row_sums)
+    axes[0].plot(centers, h_rows, lw=2.2, color=EG_COLOR, label="All rows")
+    axes[0].set_xlabel("Row sum", fontsize=xlabel_fs)
+    axes[0].set_ylabel("Density" if density else "Count", fontsize=ylabel_fs)
     axes[0].legend(frameon=False)
 
     h_ec = _h(e_cols); h_ic = _h(i_cols)
     axes[1].plot(centers, h_ec, lw=2.2, color=EG_COLOR, label="E cols")
     axes[1].plot(centers, h_ic, lw=2.2, color=GD_COLOR, label="I cols")
-    axes[1].set_xlabel("Column sum"); axes[1].legend(frameon=False)
+    axes[1].set_xlabel("Column sum", fontsize=xlabel_fs)
+    axes[1].legend(frameon=False)
 
     if title:
-        axes[0].set_title(title)
+        axes[0].set_title(title, fontsize=title_fs)
     fig.tight_layout()
     fig.savefig(outpath, dpi=300, bbox_inches="tight")
     fig.savefig(outpath.replace(".png", ".pdf"), dpi=300, bbox_inches="tight")
@@ -269,8 +272,8 @@ def plot_spectrum(W_hh, outpath: str, *, title: Optional[str] = None):
     rad = np.abs(eigs).max()
     ax.add_artist(plt.Circle((0, 0), rad, fill=False, lw=1.2, color=GD_COLOR, ls=":"))
     ax.set_aspect("equal", adjustable="box")
-    ax.set_xlabel("Re")
-    ax.set_ylabel("Im")
+    ax.set_xlabel("Re", fontsize=14)
+    ax.set_ylabel("Im", fontsize=14)
     if title:
         ax.set_title(title)
     ax.legend(frameon=False, loc="upper right")
@@ -295,7 +298,7 @@ def plot_whh_heatmap(W_hh, sign_vec, outpath: str, *, title: Optional[str] = Non
     fig, ax = plt.subplots(figsize=(6.4, 5.6))
     _set_pub_style(ax)
     im = ax.imshow(W, cmap="RdBu_r", vmin=vmin, vmax=vmax, interpolation="nearest", origin="upper")
-    ax.set_xlabel("Pre-synaptic (column)"); ax.set_ylabel("Post-synaptic (row)")
+    ax.set_xlabel("Pre-synaptic units", fontsize=14); ax.set_ylabel("Post-synaptic units", fontsize=14)
     if title:
         ax.set_title(title)
 

@@ -1,9 +1,9 @@
 seed: 1
 outdir: outputs/fp_runs/    
-tasks: ["dm1"]             
+tasks: ["dlygo"]    #dm1         
 
 data:
-  source: cached             # "online" or "cached"
+  source: online             # "online" or "cached"
   batch_size: 128
   seq_len: 80
 

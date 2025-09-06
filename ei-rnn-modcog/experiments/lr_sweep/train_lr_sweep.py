@@ -1,18 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Learning-rate sweep (single-head ModCog) with EG & GD on same plot.
-
-- Shared LR grid (or per-optimizer grids if you prefer)
-- Single seed by default (no error bars). Multi-seed works too.
-- Resume/skip: append only new (algo, lr) pairs to an existing CSV,
-  gated by a config signature (tasks/data/model/optim/train).
-- Colors: EG (blue), GD (red). Publication style.
-
-Requires your existing modules:
-  src.data.mod_cog_tasks, src.models.ei_rnn, src.optim.sgd_eg,
-  src.training.losses, src.training.metrics, src.utils.seeding
-"""
-
 import argparse, csv, json, math, random, time
 from pathlib import Path
 
@@ -29,9 +14,6 @@ from src.training.losses import ModCogLossCombined, decision_mask_from_inputs
 from src.training.metrics import accuracy_with_fixation
 from src.utils.seeding import set_seed_all, pick_device, device_name
 
-# ---------------------------------------------------------------------
-# Colors & plot style
-# ---------------------------------------------------------------------
 EG_COLOR = "#1f77b4"
 GD_COLOR = "#d62728"
 TARGET_COLOR = "#6c757d"
@@ -43,9 +25,6 @@ def _set_pub_style(ax):
     ax.spines["right"].set_visible(False)
     ax.tick_params(axis="both", labelsize=12)
 
-# ---------------------------------------------------------------------
-# Data helpers (mirror your training script)
-# ---------------------------------------------------------------------
 def ensure_tensor(x, dtype, device):
     if isinstance(x, np.ndarray):
         return torch.from_numpy(x).to(device=device, dtype=dtype)
@@ -89,7 +68,6 @@ def build_task_datasets(task_names, batch_size, seq_len, data_cfg, device=None):
             out[t] = (tr, va, tr_env.action_space.n, tr_env.observation_space.shape[-1])
         return out
 
-    # cached path
     from src.data.dataset_cached import (
         build_cached_dataset, split_cached, save_cached_npz, load_cached_npz, CachedBatcher
     )
@@ -123,11 +101,7 @@ def build_task_datasets(task_names, batch_size, seq_len, data_cfg, device=None):
         out[t] = (tr, va, int(action_n), int(input_dim))
     return out
 
-# ---------------------------------------------------------------------
-# Model factory (keeps your softplus beta/threshold if present)
-# ---------------------------------------------------------------------
 def make_model(input_dim, output_dim, model_cfg):
-    # Softplus shaping if your EIConfig supports it
     beta = float(model_cfg.get("softplus_beta", 8.0))
     th   = float(model_cfg.get("softplus_threshold", 20.0))
     return EIRNN(
@@ -146,9 +120,6 @@ def make_model(input_dim, output_dim, model_cfg):
         ),
     )
 
-# ---------------------------------------------------------------------
-# Single run at (algo, lr, seed)
-# ---------------------------------------------------------------------
 def run_once(cfg, device, dsets, algo, lr_value, seed):
     set_seed_all(int(seed), deterministic=False)
     tasks = cfg.get("tasks", ["dm1"])
@@ -171,13 +142,11 @@ def run_once(cfg, device, dsets, algo, lr_value, seed):
     mask_thr  = float(train.get("mask_threshold", 0.5))
     label_smoothing = float(train.get("label_smoothing", 0.1))
 
-    # discover dims once
     X0, _ = dsets[tasks[0]][0]()
     input_dim = X0.shape[-1]
     output_dim = dsets[tasks[0]][2]
     model = make_model(input_dim, output_dim, modelcfg).to(device)
 
-    # optimizer
     if algo == "eg":
         lr_eg = float(lr_value)
         lr_gd = float(gd_cfg.get("lr", 0.05))  # for non-recurrent params
@@ -204,7 +173,6 @@ def run_once(cfg, device, dsets, algo, lr_value, seed):
 
     crit = ModCogLossCombined(label_smoothing=label_smoothing, fixdown_weight=fixdown)
 
-    # train for fixed budget
     best_val_acc = -1.0
     val_acc_hist = []
     steps_seen = 0
@@ -243,7 +211,6 @@ def run_once(cfg, device, dsets, algo, lr_value, seed):
         "steps_seen": steps_seen,
     }
 
-# Simple “plateau” epoch: rolling improvement below tol for W epochs
 def time_to_plateau(acc_hist, window=2, tol=0.002):
     if not acc_hist: return None
     acc = np.asarray(acc_hist, dtype=float)
@@ -253,82 +220,98 @@ def time_to_plateau(acc_hist, window=2, tol=0.002):
             return t
     return len(acc)
 
-# ---------------------------------------------------------------------
-# Plotting (no error bars; EG=blue, GD=red)
-# ---------------------------------------------------------------------
+
 def plot_acc_vs_lr(out_png, results_by_algo, xlog=True, target_lr=None):
-    fig, ax = plt.subplots(figsize=(6,4))
+    fig, ax = plt.subplots(figsize=(6, 4))
     for algo, rows in results_by_algo.items():
-        lrs   = [r["lr"] for r in rows]
-        vals  = [float(np.mean(r["best_val_acc_seeds"])) for r in rows]
-        ax.plot(lrs, vals, marker="o", linewidth=2, markersize=6,
-                label=algo.upper(), color=COLORS.get(algo, None))
+        lrs    = [r["lr"] for r in rows]
+        means  = [float(np.mean(r["best_val_acc_seeds"])) for r in rows]
+        stds   = []
+        for r in rows:
+            vals = np.asarray(r["best_val_acc_seeds"], dtype=float)
+            stds.append(float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0)
+
+        ax.errorbar(
+            lrs, means, yerr=stds,
+            fmt="-o", linewidth=2, markersize=6, capsize=3,
+            label=algo.upper(), color=COLORS.get(algo, None)
+        )
+
     if target_lr:
         for algo, lr in target_lr.items():
             if lr is not None:
                 ax.axvline(float(lr), color=TARGET_COLOR, linestyle="--", linewidth=1)
-    if xlog: ax.set_xscale("log")
-    ax.set_xlabel("learning rate", fontsize=12)
-    ax.set_ylabel("best validation accuracy", fontsize=12)
-    ax.set_title("Learning-rate sweep", fontsize=14)
+
+    if xlog:
+        ax.set_xscale("log")
+    ax.set_xlabel("Learning rate", fontsize=14)
+    ax.set_ylabel("Best validation accuracy", fontsize=14)
     ax.legend(frameon=False)
     _set_pub_style(ax)
     Path(out_png).parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout(); fig.savefig(out_png, dpi=160); plt.close(fig)
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=160)
+    plt.close(fig)
+
 
 def plot_plateau_vs_lr(out_png, results_by_algo, steps_per_epoch, target_lr=None):
-    fig, ax = plt.subplots(figsize=(6,4))
+    fig, ax = plt.subplots(figsize=(6, 4))
     for algo, rows in results_by_algo.items():
-        lrs   = [r["lr"] for r in rows]
-        steps = [np.mean(r["plateau_epochs_seeds"]) * steps_per_epoch for r in rows]
-        ax.plot(lrs, steps, marker="o", linewidth=2, markersize=6,
-                label=algo.upper(), color=COLORS.get(algo, None))
+        lrs    = [r["lr"] for r in rows]
+
+        means_steps = []
+        stds_steps  = []
+        for r in rows:
+            epochs_arr = np.asarray(r["plateau_epochs_seeds"], dtype=float)
+            steps_arr  = epochs_arr * float(steps_per_epoch)
+            means_steps.append(float(np.mean(steps_arr)))
+            stds_steps.append(float(np.std(steps_arr, ddof=1)) if len(steps_arr) > 1 else 0.0)
+
+        ax.errorbar(
+            lrs, means_steps, yerr=stds_steps,
+            fmt="-o", linewidth=2, markersize=6, capsize=3,
+            label=algo.upper(), color=COLORS.get(algo, None)
+        )
+
     if target_lr:
         for algo, lr in target_lr.items():
             if lr is not None:
                 ax.axvline(float(lr), color=TARGET_COLOR, linestyle="--", linewidth=1)
+
     ax.set_xscale("log")
-    ax.set_xlabel("learning rate", fontsize=12)
-    ax.set_ylabel("steps to plateau (mean)", fontsize=12)
-    ax.set_title("Convergence speed vs LR", fontsize=14)
+    ax.set_xlabel("learning rate", fontsize=14)
+    ax.set_ylabel("steps to plateau (mean ± sd)", fontsize=14)
     ax.legend(frameon=False)
     _set_pub_style(ax)
     Path(out_png).parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout(); fig.savefig(out_png, dpi=160); plt.close(fig)
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=160)
+    plt.close(fig)
 
-# ---------------------------------------------------------------------
-# Config signature & resume/skip
-# ---------------------------------------------------------------------
 def _cfg_signature(cfg):
     import hashlib
     keys = ["tasks","data","model","optim","train"]
     blob = json.dumps({k: cfg.get(k, {}) for k in keys}, sort_keys=True, default=float)
     return hashlib.md5(blob.encode()).hexdigest()[:8]
 
-# ---------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", type=str, default="configs/lrsweep.yaml")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config, "r"))
 
-    # seeding & device
     set_seed_all(int(cfg.get("seed", 1)), deterministic=False)
     device = pick_device(cfg.get("device", "auto"))
     print(f"Using device: {device_name(device)}")
 
     outdir = Path(cfg.get("outdir", "outputs/lrsweep")); outdir.mkdir(parents=True, exist_ok=True)
 
-    # datasets (built once)
     data = cfg.get("data", {})
     tasks = cfg.get("tasks", ["dm1"]); tasks = tasks if isinstance(tasks, list) else [tasks]
     seq_len   = int(data.get("seq_len", 350))
     batch_sz  = int(data.get("batch_size", 128))
     dsets = build_task_datasets(tasks, batch_sz, seq_len, data, device=device.type)
 
-    # sweep settings
     sweep = cfg.get("sweep", {}) or {}
     algos = [a.lower() for a in sweep.get("algorithms", ["eg","gd"])]
 
@@ -347,7 +330,6 @@ def main():
     train_cfg = cfg.get("train", {})
     steps_per_epoch = int(train_cfg.get("steps_per_epoch", 300))
 
-    # resume: load existing rows with same signature
     sig = _cfg_signature(cfg)
     out_csv = outdir / "lrsweep_results_detailed.csv"
     existing_rows = []
@@ -362,7 +344,6 @@ def main():
     results_rows = []
     results_by_algo = {a: [] for a in algos}
 
-    # run sweep
     for algo in algos:
         grid = lr_grid.get(algo, [])
         algo_rows = []
@@ -402,7 +383,6 @@ def main():
             })
         results_by_algo[algo] = algo_rows
 
-    # write merged CSV (old + new)
     all_rows = existing_rows + results_rows
     if all_rows:
         with open(out_csv, "w", newline="") as f:
@@ -415,7 +395,6 @@ def main():
     else:
         print("No new rows to write (resume/skip found all pairs already present).")
 
-    # plots
     if bool(plot_cfg.get("make_plots", True)):
         plot_acc_vs_lr(str(outdir / "lrsweep_acc_vs_lr.png"), results_by_algo, xlog=True, target_lr=target_lr)
         if bool(plot_cfg.get("plot_plateau", True)):
