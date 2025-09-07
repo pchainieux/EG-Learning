@@ -83,9 +83,11 @@ def build_model_and_load(checkpoint_path: str, device: str) -> Tuple[torch.nn.Mo
         exc_frac=float(model_cfg.get("exc_frac", 0.8)),
         spectral_radius=float(model_cfg.get("spectral_radius", 1.2)),
         input_scale=float(model_cfg.get("input_scale", 1.0)),
-        leak=float(model_cfg.get("leak", 0.2)),
+        leak=float(model_cfg.get("leak", 1)),
         nonlinearity=(model_cfg.get("nonlinearity", "softplus")).lower(),
         readout=(model_cfg.get("readout", "e_only")).lower(),
+        softplus_beta=float(model_cfg.get("softplus_beta", 8.0)),
+        softplus_threshold=float(model_cfg.get("softplus_threshold", 20.0)),
     )
 
     model = EIRNN(input_size=D_in, output_size=C_out, cfg=ei_cfg).to(device)
@@ -186,7 +188,7 @@ def forward_collect(model: torch.nn.Module, batch: dict, return_states: bool):
 
     for t in range(T):
         pre = X[:, t, :] @ Wx.T + h @ Wh.T + b
-        phi = F.softplus(pre) if model._nl_kind == "softplus" else torch.tanh(pre)
+        phi = model._phi(pre)
         h = (1.0 - alpha) * h + alpha * phi
 
         h.retain_grad()

@@ -2,7 +2,7 @@ exp_id: "exp_ei_credit"
 out_dir: outputs/ei_gradient/test
 
 # Single head checkpoints only
-checkpoint: "outputs/row_sum/singlehead_epoch010.pt"
+checkpoint: "outputs/gradient_run/singlehead_epoch012.pt"
 #checkpoint: "outputs/final/model_perf/gd_t_1_H_256/singlehead_epoch002.pt"
 
 seeds: [1, 2, 3]

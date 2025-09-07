@@ -20,8 +20,8 @@ mpl.rcParams.update({
     "grid.alpha": 0.2,
     "grid.linewidth": 0.6,
     "axes.linewidth": 0.8,
-    "axes.labelsize": 14,
-    "axes.titlesize": 14, 
+    "axes.labelsize": 20,
+    "axes.titlesize": 20, 
     "xtick.labelsize": 10,
     "ytick.labelsize": 10,
     "legend.fontsize": 11,
@@ -105,8 +105,8 @@ def load_tensors(path: str | Path) -> dict:
     raise ValueError(f"Unexpected tensor file format at {path}")
 
 def _finalize_axes(ax, xlabel: str, ylabel: str):
-    ax.set_xlabel(xlabel, fontsize=14)
-    ax.set_ylabel(ylabel, fontsize=14)
+    ax.set_xlabel(xlabel, fontsize=20)
+    ax.set_ylabel(ylabel, fontsize=20)
     ax.grid(True, which="both", axis="both", alpha=0.25)
     ax.tick_params(direction="out", length=4, width=0.8)
 
@@ -233,7 +233,7 @@ def main():
         ax.plot(x, mI, color="tab:blue", label="I")
         ax.fill_between(x, mI - sI, mI + sI, color="tab:blue", alpha=0.20, linewidth=0)
 
-        ax.set_xlabel("Time", fontsize=14); ax.set_ylabel(ylabel, fontsize=14)
+        ax.set_xlabel("Time", fontsize=20); ax.set_ylabel(ylabel, fontsize=20)
         ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
         ax.legend(loc="upper right")
         fig.tight_layout()
@@ -343,9 +343,9 @@ def main():
     else:
         print("[plot_all] Skipping distributions (metrics_units.csv missing expected columns).", file=sys.stderr)
 
-    grads_pt = grads_dir / "grads.pt"
-    if grads_pt.exists():
-        T = load_tensors(grads_pt)
+    grads_pt = list(grads_dir.glob("grads_seed000*.pt"))
+    if grads_pt[0].exists():
+        T = load_tensors(grads_pt[0])
         if "grad_x" in T and "x_seq" in T:
             G = T["grad_x"].abs()  
             if G.ndim != 3:

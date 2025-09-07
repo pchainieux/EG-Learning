@@ -1,6 +1,6 @@
 seed: 1
 outdir: outputs/fp_runs/    
-tasks: ["dlygo"]    #dm1         
+tasks: ["dm1"]    #dm1         
 
 data:
   source: online             # "online" or "cached"

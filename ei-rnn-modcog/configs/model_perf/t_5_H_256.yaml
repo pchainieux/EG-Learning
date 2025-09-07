@@ -1,6 +1,6 @@
-seed: 1
+seed: 2
 device: auto                  # 'auto', 'cpu', 'cuda'
-outdir: outputs/final/model_perf/gd_t_5_H_256          # create new folder if I want to save a specific experiment results
+outdir: outputs/final/model_perf_2/eg_t_5_H_256          # create new folder if I want to save a specific experiment results
 
 tasks: [dm1, dm2, dms, dnms, ctxdlydm1]                # e.g., ["dm1", "dms"]
 
@@ -29,7 +29,7 @@ model:
   softplus_threshold: 20.0
 
 optim:
-  algorithm: gd               # 'eg' (EG on W_hh + GD on others), 'gd' (GD everywhere)
+  algorithm: eg               # 'eg' (EG on W_hh + GD on others), 'gd' (GD everywhere)
   eg:
     lr: 0.2
     momentum: 0.0

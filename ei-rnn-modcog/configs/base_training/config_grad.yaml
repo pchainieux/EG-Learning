@@ -1,13 +1,13 @@
 seed: 1
 device: auto                  # 'auto', 'cpu', 'cuda'
-outdir: outputs/biological_constraints/          # create new folder if I want to save a specific experiment results
+outdir: outputs/gradient_run/          # create new folder if I want to save a specific experiment results
 
 tasks: ["dm1"]                # e.g., ["dm1", "dms"]
 
 data:
-  source: online             # "online", "cached"
+  source: cached             # "online", "cached"
   batch_size: 128
-  seq_len: 80
+  seq_len: 30
 
   cache:
     num_batches: 128
@@ -20,7 +20,7 @@ data:
 model:
   hidden_size: 256
   exc_frac: 0.8
-  spectral_radius: 1.2
+  spectral_radius: 1.0
   input_scale: 1.0
   leak: 1               # (0,1]
   nonlinearity: softplus  # softplus | tanh
@@ -41,8 +41,8 @@ optim:
     weight_decay: 1e-5
 
 train:
-  num_epochs: 20               # set to 20 
-  steps_per_epoch: 500       #  minibatches (online draw) per epoch
+  num_epochs: 15               # set to 20 
+  steps_per_epoch: 300       #  minibatches (online draw) per epoch
   val_batches: 20             # per task validation batches at epoch end
   grad_clip: 1.0
   input_noise_std: 0.0
