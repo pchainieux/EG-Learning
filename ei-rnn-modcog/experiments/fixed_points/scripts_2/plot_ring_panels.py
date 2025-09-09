@@ -8,23 +8,24 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-from experiments.fixed_points.src.model_io import rebuild_model_from_ckpt
+# model loader: try root import first, then package path
+try:
+    from model_io import rebuild_model_from_ckpt
+except ModuleNotFoundError:  # pragma: no cover
+    from experiments.fixed_points.src.model_io import rebuild_model_from_ckpt  # type: ignore
 
-# Try local import first, then package path (so this works whether you run with -m or directly)
-from experiments.fixed_points.scripts_2.unified_fixed_points import step_F  # type: ignore
+# FP step: try local first, then package path
+try:
+    from unified_fixed_points import step_F
+except ModuleNotFoundError:  # pragma: no cover
+    from experiments.fixed_points.scripts_2.unified_fixed_points import step_F  # type: ignore
 
 
 # -----------------------
 # Small helpers
 # -----------------------
 
-def _device_and_dtype(model: torch.nn.Module) -> Tuple[torch.device, torch.dtype]:
-    p = next(model.parameters())
-    return p.device, p.dtype
-
-
 def _find_ckpt(run_dir: Path) -> Path:
-    """Prefer <run_dir>/ckpt.pt; else pick latest singlehead_epoch*.pt."""
     ckpt = run_dir / "ckpt.pt"
     if ckpt.exists():
         return ckpt
@@ -32,10 +33,8 @@ def _find_ckpt(run_dir: Path) -> Path:
     if cands:
         return cands[-1]
     raise FileNotFoundError(
-        f"Could not find a checkpoint in {run_dir} "
-        "(expected ckpt.pt or singlehead_epoch*.pt)"
+        f"Could not find a checkpoint in {run_dir} (ckpt.pt or singlehead_epoch*.pt)"
     )
-
 
 def _get_model_and_hparams(run_dir: Path, device: torch.device):
     ckpt = _find_ckpt(run_dir)
@@ -47,14 +46,24 @@ def _get_model_and_hparams(run_dir: Path, device: torch.device):
     print(f"[plot_ring_panels] using checkpoint: {ckpt}")
     return model, leak, beta, saved_cfg
 
-
 def _load_fp_artifacts(run_dir: Path):
     npz = np.load(run_dir / "eval" / "fixed_points" / "fixed_points.npz", allow_pickle=True)
-    H_star = npz["H_star"]
-    eigs = list(npz["eigvals"])
-    H0 = npz["H0"]
-    x_ctx = npz["x_ctx"]
+    H_star = npz["H_star"]                  # (N_fp, H)
+    eigs = list(npz["eigvals"])             # list of arrays
+    H0 = npz["H0"]                          # (N_seed, H)
+    x_ctx = npz["x_ctx"]                    # (D,)
     return H_star, eigs, H0, x_ctx
+
+def _rho_from_eigs(eigs_list: List[np.ndarray]) -> np.ndarray:
+    out = np.full(len(eigs_list), np.nan, dtype=float)
+    for i, e in enumerate(eigs_list):
+        if e is not None and len(e) > 0:
+            out[i] = float(np.max(np.abs(e)))
+    return out
+
+def _device_and_dtype(model: torch.nn.Module) -> Tuple[torch.device, torch.dtype]:
+    p = next(model.parameters())
+    return p.device, p.dtype
 
 
 # -----------------------
@@ -74,7 +83,6 @@ def pca_fit(X: np.ndarray, k: int = 2) -> Tuple[np.ndarray, np.ndarray, np.ndarr
     evr = (S ** 2) / (len(S) - 1)
     evr = evr / evr.sum()
     return P, mu.squeeze(0), evr[:k]
-
 
 def pca_project(X: np.ndarray, P: np.ndarray, mu: np.ndarray) -> np.ndarray:
     return (X - mu) @ P
@@ -106,7 +114,8 @@ def ring_readout_coords(
         return None
 
     with torch.no_grad():
-        logits = (H @ model.W_out.weight.T + (model.W_out.bias if model.W_out.bias is not None else 0.0)).detach().cpu().numpy()  # (N, out_dim)
+        logits = (H @ model.W_out.weight.T +
+                  (model.W_out.bias if model.W_out.bias is not None else 0.0)).detach().cpu().numpy()
     y = logits[:, idxs]  # (N, K)
     x = (y * np.cos(angs)).sum(axis=1)
     s = (y * np.sin(angs)).sum(axis=1)
@@ -117,91 +126,121 @@ def ring_readout_coords(
 # Plotting
 # -----------------------
 
-def _simulate_traj(model, h0: torch.Tensor, x_bar: torch.Tensor, steps: int, leak: float, beta: float) -> torch.Tensor:
+def _simulate_traj_clipped(model, h0: torch.Tensor, x_bar: torch.Tensor,
+                           steps: int, leak: float, beta: float,
+                           clip: float = 1e6) -> torch.Tensor:
+    """Short, clipped flows so they don't dominate PCA/axes."""
     H = [h0.detach().clone()]
     h = h0.detach().clone()
     for _ in range(steps):
         h = step_F(model, h, x_bar, leak=leak, beta=beta)
+        if torch.linalg.vector_norm(h).item() > clip:
+            break
         H.append(h.clone())
     return torch.stack(H, dim=0)
 
 
-def _scatter_with_trajs(ax, fp_xy: np.ndarray, trajs_xy: List[np.ndarray], title: str, cval: Optional[np.ndarray] = None):
-    if cval is None:
-        ax.scatter(fp_xy[:, 0], fp_xy[:, 1], s=10, alpha=0.9)
-    else:
-        sc = ax.scatter(fp_xy[:, 0], fp_xy[:, 1], s=10, alpha=0.9, c=cval, cmap="viridis")
-        cb = plt.colorbar(sc, ax=ax, shrink=0.9)
-        cb.set_label("readout (logit)")
-    for tr in trajs_xy:
-        ax.plot(tr[:, 0], tr[:, 1], linewidth=0.8, alpha=0.7)
-    ax.set_title(title)
-    ax.set_xlabel("dim 1")
-    ax.set_ylabel("dim 2")
-    ax.axis("equal")
-
-
-def plot_ring_panel_for_run(run_dir: Path, cfg: Mapping[str, Any], outfile: Path, steps: int = 50, n_traj: int = 16):
+def plot_ring_panel_for_run(run_dir: Path, cfg: Mapping[str, Any], outfile: Path,
+                            steps: int = 10, n_traj: int = 16,
+                            standardize: bool = True, use_ring_subset: bool = False,
+                            ring_eps: float = 0.03):
+    """
+    - PCA is fit on the fixed-point cloud (optionally standardized).
+    - Flows are short & clipped; they do not affect the PCA basis.
+    - If use_ring_subset=True, only points with |rho-1|<ring_eps are shown.
+    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model, leak, beta, saved_cfg = _get_model_and_hparams(run_dir, device=device)
     H_star, eigs, H0, x_ctx = _load_fp_artifacts(run_dir)
 
+    # Spectral radii for diagnostics / optional filtering
+    rho = _rho_from_eigs(eigs)
+    mask_ring = np.isfinite(rho) & (np.abs(rho - 1.0) < ring_eps)
+    if use_ring_subset and mask_ring.any():
+        H_plot = H_star[mask_ring]
+    else:
+        H_plot = H_star
+
+    # Optional standardization (z-score per unit) before PCA
+    if standardize:
+        mu_u = H_plot.mean(axis=0, keepdims=True)
+        std_u = H_plot.std(axis=0, keepdims=True) + 1e-8
+        H_for_pca = (H_plot - mu_u) / std_u
+        P, mu, _ = pca_fit(H_for_pca, k=2)
+        # project FP set (full, not only subset) through the same transform
+        H_all_std = (H_star - mu_u) / std_u
+        fp_pc = pca_project(H_all_std, P, mu)
+    else:
+        P, mu, _ = pca_fit(H_plot, k=2)
+        fp_pc = pca_project(H_star, P, mu)
+
+    # Readout at fixed points (for optional coloring)
+    ring_cfg = cfg.get("fixed_points", {}).get("ring_readout", None)
+    with torch.no_grad():
+        Ht = torch.from_numpy(H_star).to(device=device, dtype=next(model.parameters()).dtype)
+        logits = (Ht @ model.W_out.weight.T +
+                  (model.W_out.bias if model.W_out.bias is not None else 0.0)).detach().cpu().numpy()
+
+    # Build a few short, clipped trajectories (project them with the same PCA)
     dtype = next(model.parameters()).dtype
     x_bar = torch.from_numpy(x_ctx[None, :]).to(device=device, dtype=dtype)
-
-    # Optional readout ring config
-    ring_cfg = cfg.get("fixed_points", {}).get("ring_readout", None)
-
-    # Readout at fixed points (for coloring)
-    with torch.no_grad():
-        Ht = torch.from_numpy(H_star).to(device=device, dtype=dtype)
-        logits = (Ht @ model.W_out.weight.T + (model.W_out.bias if model.W_out.bias is not None else 0.0)).detach().cpu().numpy()  # (N_fp, out_dim)
-
-    # PCA fit on short memory trajectories (under constant x_ctx) for subspace
-    pick = np.linspace(0, H0.shape[0] - 1, num=min(n_traj, H0.shape[0]), dtype=int).tolist()
-    trajs = []
+    pick = np.linspace(0, min(H0.shape[0]-1, 4*n_traj-1), num=min(n_traj, H0.shape[0]), dtype=int).tolist()
+    trajs_pc: List[np.ndarray] = []
     for i in pick:
         h0 = torch.from_numpy(H0[i][None, :]).to(device=device, dtype=dtype)
-        H_traj = _simulate_traj(model, h0, x_bar, steps=steps, leak=leak, beta=beta).squeeze(1 if h0.ndim == 2 else 0)
-        trajs.append(H_traj.detach().cpu().numpy())  # (steps+1, H)
+        H_traj = _simulate_traj_clipped(model, h0, x_bar, steps=steps, leak=leak, beta=beta)
+        if standardize:
+            H_traj_np = H_traj.detach().cpu().numpy()
+            H_traj_std = (H_traj_np - mu_u.squeeze(0)) / std_u.squeeze(0)
+            trajs_pc.append(pca_project(H_traj_std, P, mu))
+        else:
+            trajs_pc.append(pca_project(H_traj.detach().cpu().numpy(), P, mu))
 
-    # Concatenate for PCA (fallback to FP set if degenerate)
-    H_concat = np.concatenate(trajs, axis=0) if len(trajs) > 0 else H_star
-    if H_concat.shape[0] < 3:
-        H_concat = H_star
-    P, mu, _ = pca_fit(H_concat, k=2)
-
-    # Project fixed points and trajectories
-    fp_pc = pca_project(H_star, P, mu)  # (N_fp, 2)
-    trajs_pc = [pca_project(tr, P, mu) for tr in trajs]
-
-    # Also try ring-readout projection if configured
+    # Optional ring-readout projection
     fp_rr = None
     if ring_cfg is not None:
         with torch.no_grad():
             Ht = torch.from_numpy(H_star).to(device=device, dtype=dtype)
         fp_rr = ring_readout_coords(model, Ht, ring_cfg)
 
-    # Build figure
-    fig, axs = plt.subplots(1, 2 if fp_rr is not None else 1, figsize=(10 if fp_rr is not None else 5, 4), constrained_layout=True)
+    # --- Figure ---
+    ncols = 2 if fp_rr is not None else 1
+    fig, axs = plt.subplots(1, ncols, figsize=(10 if ncols == 2 else 6, 4), constrained_layout=True)
 
-    # Panel A: PCA space
-    ax0 = axs if fp_rr is None else axs[0]
+    # Panel A: PCA space (color by a chosen readout idx if provided)
+    ax0 = axs if ncols == 1 else axs[0]
     cvals = None
     color_idx = None
     if ring_cfg is not None and "color_readout_idx" in ring_cfg:
         color_idx = int(ring_cfg["color_readout_idx"])
     if color_idx is not None and 0 <= color_idx < logits.shape[1]:
         cvals = logits[:, color_idx]
-    _scatter_with_trajs(ax0, fp_pc, [pca_project(tr, P, mu) for tr in trajs], "Fixed points & flows in memory PCA space", cval=cvals)
+        sc = ax0.scatter(fp_pc[:, 0], fp_pc[:, 1], c=cvals, s=10, alpha=0.9, cmap="viridis")
+        cb = plt.colorbar(sc, ax=ax0, shrink=0.9)
+        cb.set_label("readout (logit)")
+    else:
+        ax0.scatter(fp_pc[:, 0], fp_pc[:, 1], s=10, alpha=0.9)
+
+    # overlay short flows
+    for tr in trajs_pc:
+        ax0.plot(tr[:, 0], tr[:, 1], linewidth=0.8, alpha=0.7)
+
+    ax0.set_title("Fixed points & short flows (blank delay)")
+    ax0.set_xlabel("PC 1")
+    ax0.set_ylabel("PC 2")
+    ax0.axis("equal")
 
     # Panel B: ring readout space (if available)
     if fp_rr is not None:
         ax1 = axs[1]
-        _scatter_with_trajs(ax1, fp_rr, [], "Fixed points in ring readout space")
-        # draw unit circle for reference
+        ax1.scatter(fp_rr[:, 0], fp_rr[:, 1], s=10, alpha=0.9)
+        # reference unit circle
         t = np.linspace(0, 2*np.pi, 200)
         ax1.plot(np.cos(t), np.sin(t), linestyle="--", linewidth=0.8, alpha=0.6)
+        ax1.set_title("Fixed points in ring readout space")
+        ax1.set_xlabel("dim 1")
+        ax1.set_ylabel("dim 2")
+        ax1.axis("equal")
 
     outfile.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(outfile, dpi=200)

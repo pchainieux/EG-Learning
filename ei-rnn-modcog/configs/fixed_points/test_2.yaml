@@ -1,0 +1,54 @@
+# ===== dlygo_optimized.yaml =====
+seed: 1
+device: auto
+outdir: outputs/dlygo_test_2/
+
+tasks: ["dlygo"]
+
+data:
+  source: cached
+  batch_size: 64
+  seq_len: 400
+
+  cache:
+    num_batches: 256
+    val_frac: 0.15
+    build_if_missing: true
+    seed: 7
+    paths:
+      dlygo: outputs/cache/dlygo_optimized.npz
+
+model:
+  hidden_size: 512
+  exc_frac: 0.75
+  spectral_radius: 1.5
+  input_scale: 1.5
+  leak: 0.7
+  nonlinearity: softplus
+  readout: all
+  softplus_beta: 2.0
+  softplus_threshold: 20.0
+
+optim:
+  algorithm: gd
+  gd:
+    lr: 0.05
+    momentum: 0.95
+    weight_decay: 5e-6
+
+train:
+  num_epochs: 100
+  steps_per_epoch: 500
+  val_batches: 50
+  grad_clip: 0.5
+  input_noise_std: 0.05
+  fixdown_weight: 0.2
+  spectral_renorm_every: 100
+  mask_threshold: 0.3
+  task_sampling: round_robin
+  task_weights: []
+
+  row_sum_zero:
+    enabled: true
+    weight: 0.1
+    per_sign: true
