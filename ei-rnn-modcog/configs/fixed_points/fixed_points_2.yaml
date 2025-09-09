@@ -1,0 +1,78 @@
+# ===== experiment.yaml =====
+seed: 1
+device: auto
+outdir: outputs/dlygo_eg/
+
+tasks: ["dlygo"]                 # keep your training list; ring typically needs a circular/angle task (see notes below)
+
+data:
+  source: cached               # "online", "cached"
+  batch_size: 128
+  seq_len: 180
+
+  cache:
+    num_batches: 128
+    val_frac: 0.1
+    build_if_missing: true 
+    seed: 7
+    paths:                 
+      dlydm1: outputs/cache/dlygo_fast.npz 
+
+model:
+  hidden_size: 256
+  exc_frac: 0.8
+  spectral_radius: 1.2
+  input_scale: 1.0
+  leak: 0.9                     # used consistently in FP solver & rollouts
+  nonlinearity: softplus
+  readout: all
+  softplus_beta: 5.0         # used consistently in FP solver & rollouts
+  softplus_threshold: 20.0
+
+optim:
+  algorithm: eg
+  eg:
+    lr: 0.1
+    momentum: 0.0
+    weight_decay: 1e-5
+    min_magnitude: 1e-6
+  gd:
+    lr: 0.2
+    momentum: 0.9
+    weight_decay: 1e-5
+
+train:
+  num_epochs: 40
+  steps_per_epoch: 500
+  val_batches: 20
+  grad_clip: 1.0
+  input_noise_std: 0.0
+  fixdown_weight: 0.5
+  spectral_renorm_every: 0
+  mask_threshold: 0.5
+  task_sampling: round_robin
+  task_weights: []
+
+  row_sum_zero:
+    enabled: false
+    weight: 0.5
+    per_sign: false
+
+# -----------------------------
+# Fixed-point analysis & plots
+# -----------------------------
+fixed_points:
+  rollout:
+    env: yang19.dlydm1
+    batch: 512
+    seq_len: 80
+    context_channels:
+      fixation_idx: 0
+      # turn OFF all ring stimulus channels during memory (for 33-dim input: 1..32)
+      stimulus_off_idxs: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32]
+      # no rule channels for dlydm1
+  ring_readout:
+    indices: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]
+    angles:  [0.0,0.392699,0.785398,1.178097,1.570796,1.963495,2.356194,2.748894,3.141593,3.534292,3.926991,4.319690,4.712389,5.105088,5.497787,5.890486]
+    color_readout_idx: 1
+
