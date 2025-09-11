@@ -1,0 +1,58 @@
+seed: 1
+device: auto                  # 'auto', 'cpu', 'cuda'
+outdir: outputs/ablation/row_sum/0_5          # create new folder if I want to save a specific experiment results
+
+tasks: ["dm1"]                # e.g., ["dm1", "dms"]
+
+data:
+  source: cached             # "online", "cached"
+  batch_size: 128
+  seq_len: 80
+
+  cache:
+    num_batches: 128
+    val_frac: 0.1
+    build_if_missing: true 
+    seed: 7
+    paths:                 
+      dm1: outputs/cache/dm1_fast.npz
+
+model:
+  hidden_size: 256
+  exc_frac: 0.8
+  spectral_radius: 1.2
+  input_scale: 1.0
+  leak: 0.9               # (0,1]
+  nonlinearity: softplus  # softplus | tanh
+  readout: all        # e_only | all
+  softplus_beta: 10.0
+  softplus_threshold: 20.0
+
+optim:
+  algorithm: eg               # 'eg' (EG on W_hh + GD on others), 'gd' (GD everywhere)
+  eg:
+    lr: 0.2
+    momentum: 0.0
+    weight_decay: 1e-5
+    min_magnitude: 1e-6
+  gd:
+    lr: 0.1
+    momentum: 0.9
+    weight_decay: 1e-5
+
+train:
+  num_epochs: 10               # set to 20 
+  steps_per_epoch: 250       #  minibatches (online draw) per epoch
+  val_batches: 20             # per task validation batches at epoch end
+  grad_clip: 1.0
+  input_noise_std: 0.0
+  fixdown_weight: 0.5
+  spectral_renorm_every: 0
+  mask_threshold: 0.5
+  task_sampling: round_robin  # 'round_robin', 'random'
+  task_weights: []            # used when task_sampling == 'random'; [] => uniform
+
+  row_sum_zero:
+    enabled: false        # or false to turn off
+    weight: 0        # try 0.01–0.1; tune per your scale
+    per_sign: true       # penalize E and I row-sums separately

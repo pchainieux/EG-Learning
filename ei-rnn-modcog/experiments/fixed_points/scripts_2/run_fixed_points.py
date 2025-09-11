@@ -124,28 +124,39 @@ def _simulate_sequence_hidden(
 def _find_delay_middle_via_stim_off(X: np.ndarray, stim_idxs: List[int]) -> List[int]:
     """
     Robust DlyGo memory locator:
-      - compute S(t)=sum(|x_t[i]|) over stimulus ring channels
-      - find the last t with S(t)>eps (end of cue)
-      - take the middle of the following contiguous zero run (delay plateau)
+    - compute S(t)=sum(|x_t[i]|) over stimulus ring channels
+    - find the last t with S(t)>eps (end of cue)
+    - take the middle of the following contiguous zero run (delay plateau)
     If no cue was on, fallback to argmin S(t).
     """
     B, T, D = X.shape
     t_list = []
     eps = 1e-6
     stim_idxs = [int(i) for i in stim_idxs] if stim_idxs else []
+
     for b in range(B):
-        S = np.abs(X[b, :, stim_idxs]).sum(axis=1) if stim_idxs else np.zeros(T, dtype=float)
+        S = np.abs(np.take(X[b], stim_idxs, axis=-1)).sum(axis=-1) if stim_idxs else np.zeros(T, dtype=float)
         last_on = np.where(S > eps)[0]
+
         if len(last_on) == 0:
             t_list.append(int(S.argmin()))
             continue
+
         t0 = int(last_on[-1] + 1)
+        
+        # Handle edge case where stimulus ends at the last time step
+        if t0 >= T:
+            t_list.append(T - 1)
+            continue
+            
         # grow zero plateau
         t1 = t0
         while t1 < T and S[t1] <= eps:
             t1 += 1
+
         mid = t0 + max(0, (t1 - t0 - 1) // 2)
         t_list.append(min(mid, T - 1))
+
     return t_list
 
 def _collect_rollout_and_seeds(
