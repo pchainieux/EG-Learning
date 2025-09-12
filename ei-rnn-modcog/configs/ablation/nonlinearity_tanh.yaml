@@ -1,6 +1,6 @@
 seed: 1
 device: auto                  # 'auto', 'cpu', 'cuda'
-outdir: outputs/ablation/nonlinearity/tanh          # create new folder if I want to save a specific experiment results
+outdir: outputs/ablation_gd_1/nonlinearity/tanh          # create new folder if I want to save a specific experiment results
 
 tasks: ["dm1"]                # e.g., ["dm1", "dms"]
 
@@ -29,7 +29,7 @@ model:
   softplus_threshold: 20.0
 
 optim:
-  algorithm: eg               # 'eg' (EG on W_hh + GD on others), 'gd' (GD everywhere)
+  algorithm: gd               # 'eg' (EG on W_hh + GD on others), 'gd' (GD everywhere)
   eg:
     lr: 0.2
     momentum: 0.0

@@ -1,0 +1,32 @@
+# configs/dlygo_pca.yaml  (works with train_and_pca_dlygo.py)
+
+model:
+  hidden_size: 256
+  exc_frac: 0.8
+  spectral_radius: 1.0     # near-1 helps marginal/neutral modes
+  input_scale: 1.0
+  leak: 0.2                # this is the α in h = (1-α)h + αφ(...)
+  nonlinearity: tanh       # switch to softplus later if you want, ring is easier with tanh
+  readout: e_only          # optional; all is fine too
+
+task:
+  dim_ring: 16
+  fixation_steps: 5
+  stimulus_steps: 5
+  delay_steps: 10
+  decision_steps: 5
+  input_noise_std: 0.00
+
+train:
+  epochs: 20
+  batch_size: 128
+  steps_per_epoch: 250
+  lr: 0.001                # AdamW in the script
+  weight_decay: 1.0e-6
+  grad_clip: 1.0
+  seed: 7
+  log_every: 25
+
+eval:
+  n_trials: 400
+  save_dir: runs/dlygo_pca

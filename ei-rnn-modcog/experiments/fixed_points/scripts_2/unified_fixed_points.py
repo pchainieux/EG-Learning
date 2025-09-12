@@ -46,7 +46,7 @@ def solve_one_fp(
 ) -> Tuple[torch.Tensor, float, int]:
     device, dtype = x_bar.device, x_bar.dtype
     h = h0.detach().clone().to(device=device, dtype=dtype).requires_grad_(True)
-    h_seed = h0.detach().clone().to(device=device, dtype=dtype)   # <— for proximal term
+    h_seed = h0.detach().clone().to(device=device, dtype=dtype)
 
     def loss_fn(h_):
         r = residual(model, h_, x_bar, leak=leak, beta=beta)

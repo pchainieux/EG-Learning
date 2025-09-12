@@ -9,23 +9,10 @@ import torch.nn.functional as F
 import yaml
 from neurogym import Dataset
 
-# model loader: try root import first, then package path
-try:
-    from model_io import rebuild_model_from_ckpt
-except ModuleNotFoundError:
-    from experiments.fixed_points.src.model_io import rebuild_model_from_ckpt  # type: ignore
-
-# FP ops: try local first, then package path
-try:
-    from unified_fixed_points import step_F, solve_one_fp, jacobian_at, classify_from_eigs
-except ModuleNotFoundError:
-    from experiments.fixed_points.scripts_2.unified_fixed_points import (  # type: ignore
+from experiments.fixed_points.src.model_io import rebuild_model_from_ckpt
+from experiments.fixed_points.scripts_2.unified_fixed_points import ( 
         step_F, solve_one_fp, jacobian_at, classify_from_eigs
     )
-
-# -----------------------
-# Config helpers
-# -----------------------
 
 def load_config(path: str) -> Dict[str, Any]:
     with open(path, "r") as f:
@@ -38,10 +25,6 @@ def deep_update(dst: Dict[str, Any], src: Dict[str, Any]) -> Dict[str, Any]:
         else:
             dst[k] = v
     return dst
-
-# -----------------------
-# Checkpoint + device
-# -----------------------
 
 def _find_ckpt(run_dir: Path) -> Path:
     ckpt = run_dir / "ckpt.pt"
@@ -71,17 +54,7 @@ def _get_model_and_hparams(run_dir: Path, device: Optional[torch.device] = None)
     print(f"[run_fixed_points] using checkpoint: {ckpt}")
     return model, leak, beta, saved_cfg
 
-# -----------------------
-# Inputs / seeds
-# -----------------------
-
 def _build_context_input(in_dim: int, ctx_cfg: Mapping[str, Any]) -> np.ndarray:
-    """
-    Build a blank-delay clamp x_ctx:
-      - fixation channel = 1 (fixation_idx)
-      - rule/context ON if provided (rule_on_idxs)
-      - all other channels 0 (stimulus/go/etc. OFF)
-    """
     x_ctx = np.zeros((in_dim,), dtype=np.float32)
     fix_idx = ctx_cfg.get("fixation_idx", ctx_cfg.get("memory", None))
     if fix_idx is not None and 0 <= int(fix_idx) < in_dim:
@@ -103,7 +76,6 @@ def _build_context_input(in_dim: int, ctx_cfg: Mapping[str, Any]) -> np.ndarray:
 def _simulate_sequence_hidden(
     model: torch.nn.Module, X: np.ndarray, leak: float, beta: float, h0: Optional[np.ndarray] = None
 ) -> np.ndarray:
-    """Roll with the SAME update used in the solver."""
     device, dtype = _device_and_dtype(model)
     W_xh = model.W_xh.to(device=device, dtype=dtype)
     W_hh = model.W_hh.to(device=device, dtype=dtype)
@@ -122,13 +94,6 @@ def _simulate_sequence_hidden(
     return torch.stack(H, dim=0).detach().cpu().numpy()
 
 def _find_delay_middle_via_stim_off(X: np.ndarray, stim_idxs: List[int]) -> List[int]:
-    """
-    Robust DlyGo memory locator:
-    - compute S(t)=sum(|x_t[i]|) over stimulus ring channels
-    - find the last t with S(t)>eps (end of cue)
-    - take the middle of the following contiguous zero run (delay plateau)
-    If no cue was on, fallback to argmin S(t).
-    """
     B, T, D = X.shape
     t_list = []
     eps = 1e-6
@@ -144,12 +109,10 @@ def _find_delay_middle_via_stim_off(X: np.ndarray, stim_idxs: List[int]) -> List
 
         t0 = int(last_on[-1] + 1)
         
-        # Handle edge case where stimulus ends at the last time step
         if t0 >= T:
             t_list.append(T - 1)
             continue
             
-        # grow zero plateau
         t1 = t0
         while t1 < T and S[t1] <= eps:
             t1 += 1
@@ -166,10 +129,9 @@ def _collect_rollout_and_seeds(
     beta: float,
     ctx_cfg: Mapping[str, Any],
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    X, _ = ds()  # numpy
+    X, _ = ds()
     B, T, D = X.shape
     x_ctx = _build_context_input(D, ctx_cfg)
-    # prefer stimulus-based locator (post-cue delay middle)
     stim_off = ctx_cfg.get("stimulus_off_idxs", [])
     t_mems = _find_delay_middle_via_stim_off(X, stim_off)
     H_seed = np.zeros((B, int(model.W_hh.shape[0])), dtype=np.float32)
@@ -178,12 +140,7 @@ def _collect_rollout_and_seeds(
         H_seed[b] = H_traj[t_mems[b]]
     return X, H_seed, x_ctx
 
-# -----------------------
-# Dataset alias (env name)
-# -----------------------
-
 def _make_dataset_with_aliases(env_name: str, *, batch: int, seq_len: int):
-    # try given name, then common Yang registry prefixes
     candidates = [env_name]
     if "." not in env_name and "/" not in env_name:
         candidates += [f"yang19.{env_name}", f"{env_name}-v0"]
@@ -194,10 +151,6 @@ def _make_dataset_with_aliases(env_name: str, *, batch: int, seq_len: int):
         except Exception as e:
             last_err = e
     raise RuntimeError(f"Could not instantiate Dataset. Tried: {candidates}. Last error: {last_err}")
-
-# -----------------------
-# Main
-# -----------------------
 
 def main():
     ap = argparse.ArgumentParser()
@@ -219,7 +172,6 @@ def main():
     model, leak, beta, saved_cfg = _get_model_and_hparams(run_dir, device=device)
     device, dtype = _device_and_dtype(model)
 
-    # rollout config
     fp_cfg = cfg.get("fixed_points", {})
     rollout_cfg = fp_cfg.get("rollout", {})
     batch = int(rollout_cfg.get("batch", 256))
@@ -227,12 +179,10 @@ def main():
     env_name = rollout_cfg.get("env", "yang19.dlygo")
     ds = _make_dataset_with_aliases(env_name, batch=batch, seq_len=seq_len)
 
-    # seeds
     ctx_cfg = rollout_cfg.get("context_channels", {})
     X, H0, x_ctx = _collect_rollout_and_seeds(model, ds, leak=leak, beta=beta, ctx_cfg=ctx_cfg)
     x_bar = torch.from_numpy(x_ctx[None, :]).to(device=device, dtype=dtype)
 
-    # solver cfg (includes proximal nudge)
     solver_cfg = fp_cfg.get("solver", {})
     lr = float(solver_cfg.get("lr", 1e-1))
     tol = float(solver_cfg.get("tol", 1e-10))
@@ -261,7 +211,6 @@ def main():
 
     H_star = np.stack(H_star_list, axis=0)
 
-    # save
     np.savez_compressed(
         str(eval_dir / "fixed_points.npz"),
         H_star=H_star,

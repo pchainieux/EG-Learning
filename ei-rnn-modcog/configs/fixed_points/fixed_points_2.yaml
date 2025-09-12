@@ -1,10 +1,8 @@
-# ===== experiment.yaml =====
 seed: 1
 device: auto
 outdir: outputs/dlygo_gd_test/
 
-tasks: ["dlygo"]                 # keep your training list; ring typically needs a circular/angle task (see notes below)
-
+tasks: ["dlygo"]   
 data:
   source: cached               # "online", "cached"
   batch_size: 128
@@ -23,10 +21,10 @@ model:
   exc_frac: 0.8
   spectral_radius: 1.2
   input_scale: 1.0
-  leak: 0.9                     # used consistently in FP solver & rollouts
+  leak: 0.9
   nonlinearity: tanh
   readout: all
-  softplus_beta: 5.0         # used consistently in FP solver & rollouts
+  softplus_beta: 5.0 
   softplus_threshold: 20.0
 
 optim:
@@ -65,8 +63,8 @@ fixed_points:
     seq_len: 80
     context_channels:
       fixation_idx: 0
-      # all ring stimulus OFF (+ add go index here if your env has one, e.g. 33)
-      stimulus_off_idxs: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32]  # ,33 if 'go'
+      # I turn all ring stimulus off
+      stimulus_off_idxs: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32]  # + 33 if 'go'
   solver:
     lr: 1.0e-1
     tol: 1.0e-10

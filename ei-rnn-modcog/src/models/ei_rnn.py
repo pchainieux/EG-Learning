@@ -119,3 +119,32 @@ class EIRNN(nn.Module):
             out[:, t, :] = y_t
 
         return out
+
+    @torch.no_grad()
+    def forward_with_states(self, x: torch.Tensor):
+        B, T, _ = x.shape
+        H = self.cfg.hidden_size
+        alpha = self._alpha
+
+        xw = torch.nn.functional.linear(x, self.W_xh, bias=None)
+
+        h = x.new_zeros(B, H)
+        out = x.new_zeros(B, T, self.W_out.out_features)
+        h_seq   = x.new_empty(B, T, H)
+        pre_seq = x.new_empty(B, T, H)
+        act_seq = x.new_empty(B, T, H)
+
+        for t in range(T):
+            pre = xw[:, t, :] + torch.nn.functional.linear(h, self.W_hh, self.b_h)
+            act = self._phi(pre)
+            h   = (1.0 - alpha) * h + alpha * act
+
+            h_ro = h * self.e_mask if self._readout_mode == "e_only" else h
+            y_t  = self.W_out(h_ro)
+
+            pre_seq[:, t, :] = pre
+            act_seq[:, t, :] = act
+            h_seq[:, t, :]   = h
+            out[:, t, :]     = y_t
+
+        return out, h_seq, pre_seq, act_seq, x.detach().clone()
