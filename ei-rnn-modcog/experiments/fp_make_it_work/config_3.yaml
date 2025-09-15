@@ -1,0 +1,40 @@
+seed: 1
+device: auto
+outdir: outputs/last_stand/dm1_eg_2
+
+tasks: ["dm1"]
+
+data:
+  source: online
+  batch_size: 32
+  seq_len: 400
+
+model:
+  hidden_size: 512  
+  exc_frac: 0.8
+  spectral_radius: 1.0
+  input_scale: 1.0         
+  leak: 0.9 
+  nonlinearity: softplus
+  readout: e_only
+  softplus_beta: 5.0
+  softplus_threshold: 20.0
+
+optim:
+  algorithm: eg              # Change to "eg" for comparison
+  gd:
+    lr: 0.1
+
+train:
+  num_epochs: 20
+  steps_per_epoch: 500
+  input_noise_std: 0.1
+  
+eval:
+  eval_every: 5
+
+timing:
+  fixation_steps: 5
+  stimulus_steps: 5
+  delay_steps: 10
+  decision_steps: 5
