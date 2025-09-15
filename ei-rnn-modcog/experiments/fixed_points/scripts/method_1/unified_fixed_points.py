@@ -1,4 +1,3 @@
-# experiments/fixed_points/scripts/unified_fixed_points.py
 from __future__ import annotations
 
 import argparse
@@ -19,9 +18,9 @@ from experiments.fixed_points.src.model_io import rebuild_model_from_ckpt
 class SolverCfg:
     max_iter: int = 500
     tol: float = 1e-6
-    lr: float = 1.0               # step size for optimizing h
-    line_beta: float = 0.5        # backtracking shrink
-    line_c: float = 1e-4          # Armijo constant
+    lr: float = 1.0   
+    line_beta: float = 0.5   
+    line_c: float = 1e-4  
 
 
 def _device(name: str) -> torch.device:
@@ -32,7 +31,6 @@ def _device(name: str) -> torch.device:
 
 @torch.no_grad()
 def _step_F(model, h: torch.Tensor, x: torch.Tensor, leak: float, beta: float) -> torch.Tensor:
-    # ensure same dtype as model parameters
     dtype = model.W_hh.dtype
     h = h.to(dtype)
     x = x.to(dtype)
@@ -69,7 +67,6 @@ def solve_one_fp(
     beta: float,
     cfg: SolverCfg,
 ) -> Tuple[torch.Tensor, float, int]:
-    """Minimize ||F(h) - h||^2 over h via gradient descent with backtracking."""
     h = h0.detach().clone().to(device=x_bar.device, dtype=x_bar.dtype).requires_grad_(True)
 
     def loss_fn(h_):
@@ -86,14 +83,12 @@ def solve_one_fp(
         if res < cfg.tol:
             return h.detach(), res, t
 
-        # backtracking
         loss.backward()
         g = h.grad.detach().clone()
         with torch.no_grad():
             step = -lr * g
             new_h = h + step
             new_loss = float(loss_fn(new_h).detach().cpu().item())
-            # Armijo condition
             iters_bt = 0
             while new_loss > res - cfg.line_c * lr * (g ** 2).sum().item() and iters_bt < 20:
                 lr *= cfg.line_beta
@@ -121,7 +116,6 @@ def classify_motif(eigs: np.ndarray) -> str:
     if near_one and not any_gt1:
         return "continuous"
     if any_gt1 and not all_lt1:
-        # check for complex/rotational near unit circle
         has_rot = np.iscomplex(eigs).any() and (np.abs(mag - 1.0) < 0.05).any()
         return "rotational" if has_rot else "saddle"
     return "unstable"
@@ -139,7 +133,6 @@ def main():
     run_dir = Path(args.run).resolve()
     cfg = load_config(args.config)
 
-    # Where the orchestrator placed seeds & where to write results
     eval_dir = run_dir / cfg.get("fixed_points", {}).get("eval", {}).get("outdir", "eval/fixed_points")
     seeds = eval_dir / "rollout_seeds.npz"
     if not seeds.exists():
@@ -149,7 +142,6 @@ def main():
     X_np: np.ndarray = data["X"]
     H0_np: np.ndarray = data["H0"]
 
-    # Recover model
     ckpt = run_dir / "ckpt.pt"
     if not ckpt.exists():
         raise FileNotFoundError(f"Missing checkpoint: {ckpt}")
@@ -163,7 +155,6 @@ def main():
 
     solver = SolverCfg(max_iter=args.max_iter, tol=args.tol, lr=args.lr)
 
-    # match model params
     param = next(model.parameters())
     dtype = param.dtype
     device = param.device
@@ -176,12 +167,11 @@ def main():
     Eigs_list: List[np.ndarray] = []
 
     for i in range(H0.shape[0]):
-        x_bar = X_last[i].unsqueeze(0)     # (1, in_dim)
-        h0 = H0[i].unsqueeze(0)            # (1, H)
+        x_bar = X_last[i].unsqueeze(0)
+        h0 = H0[i].unsqueeze(0) 
 
         h_star, res, iters = solve_one_fp(model, x_bar, h0, leak, beta, solver)
 
-        # Jacobian & spectrum at the fixed point
         J = _jacobian(model, h_star, x_bar, leak, beta)
         eigs = np.linalg.eigvals(J)
         rho = float(np.max(np.abs(eigs))) if eigs.size else 0.0
@@ -195,11 +185,9 @@ def main():
         Eigs_list.append(eigs.astype(np.complex128))
 
     eval_dir.mkdir(parents=True, exist_ok=True)
-    # Save summary CSV
     df = pd.DataFrame(results)
     df.to_csv(eval_dir / "summary.csv", index=False)
 
-    # Save raw FP tensors & eigenvalues
     np.savez_compressed(
         str(eval_dir / "fixed_points.npz"),
         H_star=np.stack(H_star_list, axis=0),

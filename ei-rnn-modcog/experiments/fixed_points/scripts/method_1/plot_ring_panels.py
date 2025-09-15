@@ -1,4 +1,3 @@
-# experiments/fixed_points/scripts/plot_ring_panels.py
 from __future__ import annotations
 
 import argparse
@@ -12,26 +11,18 @@ import matplotlib.pyplot as plt
 
 from experiments.fixed_points.src.model_io import rebuild_model_from_ckpt
 
-
-# -----------------------
-# Utilities (no sklearn)
-# -----------------------
 def pca_fit(X: np.ndarray, k: int = 3) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    X: (N, H) rows = samples, cols = features (hidden units).
-    Returns: (components P [H,k], mean mu [H], explained_var_ratio [k])
-    """
     mu = X.mean(axis=0, keepdims=True)
     Xc = X - mu
     U, S, Vt = np.linalg.svd(Xc, full_matrices=False)
-    P = Vt.T[:, :k]                  # (H,k)
+    P = Vt.T[:, :k]     
     var = (S ** 2) / (X.shape[0] - 1)
     evr = var[:k] / var.sum()
     return P, mu.squeeze(0), evr
 
 
 def pca_project(H: np.ndarray, P: np.ndarray, mu: np.ndarray) -> np.ndarray:
-    return (H - mu) @ P  # rows projected to k-dim
+    return (H - mu) @ P 
 
 
 def classify_from_eigs(eigs: np.ndarray) -> str:
@@ -51,7 +42,6 @@ def classify_from_eigs(eigs: np.ndarray) -> str:
 
 @torch.no_grad()
 def step_F(model, h: torch.Tensor, x: torch.Tensor, leak: float, beta: float) -> torch.Tensor:
-    # match model dtype
     dtype = next(model.parameters()).dtype
     h = h.to(dtype)
     x = x.to(dtype)
@@ -62,10 +52,6 @@ def step_F(model, h: torch.Tensor, x: torch.Tensor, leak: float, beta: float) ->
 
 @torch.no_grad()
 def simulate_traj(model, h0: torch.Tensor, x_bar: torch.Tensor, steps: int, leak: float, beta: float) -> torch.Tensor:
-    """
-    Returns (steps+1, H): includes initial h0.
-    x_bar: (1, in_dim)
-    """
     H = [h0.detach().clone()]
     h = h0.detach().clone()
     for _ in range(steps):
@@ -75,12 +61,8 @@ def simulate_traj(model, h0: torch.Tensor, x_bar: torch.Tensor, steps: int, leak
 
 
 def readout_value(model, H: torch.Tensor, idx: int) -> torch.Tensor:
-    """
-    H: (..., Hdim) → scalar logit for output channel 'idx'
-    """
     W = model.W_out.weight[idx].to(H)
     b = model.W_out.bias[idx].to(H)
-    # last dim matmul
     return (H @ W) + b
 
 
@@ -88,17 +70,16 @@ def load_fp_package(run_dir: Path) -> Dict[str, np.ndarray]:
     eval_dir = run_dir / "eval" / "fixed_points"
     fp = np.load(str(eval_dir / "fixed_points.npz"), allow_pickle=True)
     return {
-        "H_star": fp["H_star"],      # (N_fp, H)
-        "eigvals": fp["eigvals"],    # object array of (H,) eigenvalues per fp
+        "H_star": fp["H_star"], 
+        "eigvals": fp["eigvals"],  
         "eval_dir": str(eval_dir),
     }
 
 
 def load_seeds(run_dir: Path) -> Tuple[np.ndarray, np.ndarray]:
-    # seeds saved by orchestrator
     seeds = np.load(str(run_dir / "eval/fixed_points/rollout_seeds.npz"), allow_pickle=True)
-    X = seeds["X"]    # (B, T, in_dim)
-    H0 = seeds["H0"]  # (B, H)
+    X = seeds["X"]  
+    H0 = seeds["H0"] 
     return X, H0
 
 
@@ -115,24 +96,17 @@ def get_model_and_hparams(run_dir: Path, device: torch.device):
 
 
 def gather_memory_trajs(model, leak, beta, X_np, H0_np, device, steps: int, stride: int = 1) -> np.ndarray:
-    """
-    Build memory-like trajectories by freezing x to last time step (x̄).
-    Returns array of shape (N_total, H) concatenating all frames (subsampled by 'stride').
-    """
     H_list: List[np.ndarray] = []
     B = X_np.shape[0]
     for i in range(B):
         x_bar = torch.from_numpy(X_np[i, -1, :][None, :]).to(device=device, dtype=next(model.parameters()).dtype)
         h0    = torch.from_numpy(H0_np[i][None, :]).to(device=device, dtype=next(model.parameters()).dtype)
-        traj  = simulate_traj(model, h0, x_bar, steps=steps, leak=leak, beta=beta)   # (steps+1, 1, H) or (steps+1, H)
+        traj  = simulate_traj(model, h0, x_bar, steps=steps, leak=leak, beta=beta) 
         H_list.append(traj[::stride].squeeze(1 if traj.ndim==3 else 0).cpu().numpy())
-    return np.concatenate(H_list, axis=0)  # (N_concat, H)
+    return np.concatenate(H_list, axis=0)
 
 
 def prepare_panel_data(run_dir: Path, readout_idx: int, steps: int, n_traj: int, device: torch.device):
-    """
-    Returns dict with: projected FP coords, motif labels, readout at FP, a few trajectories (projected), and PCA basis.
-    """
     run_dir = Path(run_dir)
     X_np, H0_np = load_seeds(run_dir)
     fp_pkg = load_fp_package(run_dir)
@@ -141,28 +115,22 @@ def prepare_panel_data(run_dir: Path, readout_idx: int, steps: int, n_traj: int,
     param = next(model.parameters())
     dtype = param.dtype
 
-    # Trajectories to build PCA basis (memory-like constant input = last X)
-    H_mem = gather_memory_trajs(model, leak, beta, X_np, H0_np, device, steps=steps, stride=1)  # (N, H)
+    H_mem = gather_memory_trajs(model, leak, beta, X_np, H0_np, device, steps=steps, stride=1) 
 
-    # PCA on those trajectories
     P, mu, evr = pca_fit(H_mem, k=3)
 
-    # Fixed points & labels
-    H_star = fp_pkg["H_star"]  # (N_fp, H)
-    eigs   = fp_pkg["eigvals"] # array of arrays
+    H_star = fp_pkg["H_star"] 
+    eigs   = fp_pkg["eigvals"]
 
     labels = [classify_from_eigs(e) for e in eigs]
     rho    = np.array([np.max(np.abs(e)) if e is not None and len(e) > 0 else np.nan for e in eigs])
 
-    # Readout values at fixed points
     with torch.no_grad():
         Ht = torch.from_numpy(H_star).to(device=device, dtype=dtype)
-        z  = readout_value(model, Ht, readout_idx).detach().cpu().numpy()  # (N_fp,)
+        z  = readout_value(model, Ht, readout_idx).detach().cpu().numpy() 
 
-    # Project fixed points & sample a few trajectories to overlay
-    H_star_pc = pca_project(H_star, P[:, :2], mu)  # (N_fp, 2)
+    H_star_pc = pca_project(H_star, P[:, :2], mu)
 
-    # Sample trajectories (uniform subset)
     B = X_np.shape[0]
     pick = np.linspace(0, B - 1, num=min(n_traj, B), dtype=int).tolist()
     trajs_2d: List[np.ndarray] = []
@@ -170,7 +138,7 @@ def prepare_panel_data(run_dir: Path, readout_idx: int, steps: int, n_traj: int,
         x_bar = torch.from_numpy(X_np[i, -1, :][None, :]).to(device=device, dtype=dtype)
         h0    = torch.from_numpy(H0_np[i][None, :]).to(device=device, dtype=dtype)
         traj  = simulate_traj(model, h0, x_bar, steps=steps, leak=leak, beta=beta).squeeze(1 if h0.ndim==2 else 0)
-        traj2 = pca_project(traj.cpu().numpy(), P[:, :2], mu)  # (steps+1, 2)
+        traj2 = pca_project(traj.cpu().numpy(), P[:, :2], mu) 
         trajs_2d.append(traj2)
 
     return {
@@ -182,10 +150,6 @@ def prepare_panel_data(run_dir: Path, readout_idx: int, steps: int, n_traj: int,
         "trajs_2d": trajs_2d,
     }
 
-
-# -----------------------
-# Plotting
-# -----------------------
 def _markers_for_labels(labels: List[str]) -> List[str]:
     m = []
     for L in labels:
@@ -198,16 +162,13 @@ def _markers_for_labels(labels: List[str]) -> List[str]:
 
 
 def plot_single_panel(ax, panel, title: str):
-    # Trajectories (light grey)
     for Txy in panel["trajs_2d"]:
         ax.plot(Txy[:, 0], Txy[:, 1], lw=0.6, alpha=0.5, zorder=1, color="0.75")
 
-    # Fixed points: color = readout, marker = motif
     xy = panel["H_star_pc"]
     z  = panel["readout"]
     markers = _markers_for_labels(panel["labels"])
 
-    # Draw by motif to get a legend that's meaningful
     unique = sorted(set(panel["labels"]))
     cmap_sc = None
     for L in unique:
@@ -216,7 +177,7 @@ def plot_single_panel(ax, panel, title: str):
             continue
         sc = ax.scatter(xy[mask, 0], xy[mask, 1], c=z[mask], s=20,
                         marker=_markers_for_labels([L])[0], linewidths=0.2, edgecolors="k", alpha=0.9, zorder=2)
-        cmap_sc = sc  # save for colorbar
+        cmap_sc = sc 
 
     ax.set_xlabel("PC1 (memory)")
     ax.set_ylabel("PC2 (memory)")
@@ -230,7 +191,6 @@ def plot_eg_vs_gd(eg_panel, gd_panel, outfile: Path):
     sc0 = plot_single_panel(axs[0], eg_panel, "EG: fixed points (color = readout)")
     sc1 = plot_single_panel(axs[1], gd_panel, "GD: fixed points (color = readout)")
 
-    # single shared colorbar if ranges are similar; otherwise separate
     if sc0 is not None:
         cbar = fig.colorbar(sc0, ax=axs, shrink=0.9, location="right")
         cbar.set_label("readout (logit)")
@@ -250,10 +210,6 @@ def plot_single_run(panel, outfile: Path):
     fig.savefig(outfile, dpi=200)
     plt.close(fig)
 
-
-# -----------------------
-# CLI
-# -----------------------
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--eg-run", type=str, default=None, help="Path to EG <outdir>/run")
@@ -281,19 +237,11 @@ def main():
 
     assert args.eg_run or args.gd_run, "Provide --single-run OR (--eg-run and/or --gd-run)."
 
-    # Build panels independently; to strictly share PCA basis, you can refit PCA
-    # on concatenated trajectories from both runs. For simplicity, we use each run's PCA.
-    # To force a SHARED basis across EG & GD, uncomment the block below.
     eg_panel = gd_panel = None
     if args.eg_run:
         eg_panel = prepare_panel_data(Path(args.eg_run), args.readout_index, args.traj_steps, args.n_traj, device)
     if args.gd_run:
         gd_panel = prepare_panel_data(Path(args.gd_run), args.readout_index, args.traj_steps, args.n_traj, device)
-
-    # Optional: fit a shared PCA on concatenated trajectories.
-    # if eg_panel and gd_panel:
-    #     P = np.concatenate([eg_panel["P"], gd_panel["P"]], axis=0)  # dummy to silence linter
-    #     # (Left as an exercise to keep this script compact. See notes in the chat.)
 
     if eg_panel and gd_panel:
         plot_eg_vs_gd(eg_panel, gd_panel, Path(args.outfile))

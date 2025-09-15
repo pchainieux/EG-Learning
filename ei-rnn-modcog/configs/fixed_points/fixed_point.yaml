@@ -1,12 +1,11 @@
-# ===== experiment.yaml =====
 seed: 1
 device: auto
-outdir: outputs/dlygo_test_5/
+outdir: outputs/dlygo_test_4/
 
-tasks: ["dlygo"]                 # keep your training list; ring typically needs a circular/angle task (see notes below)
+tasks: ["dlygo"] 
 
 data:
-  source: online               # "online", "cached"
+  source: online   
   batch_size: 128
   seq_len: 350
 
@@ -23,10 +22,10 @@ model:
   exc_frac: 0.8
   spectral_radius: 1.05
   input_scale: 1.0
-  leak: 0.8                     # used consistently in FP solver & rollouts
-  nonlinearity: softplus
+  leak: 0.8      
+  nonlinearity: tanh
   readout: all
-  softplus_beta: 5.0         # used consistently in FP solver & rollouts
+  softplus_beta: 5.0  
   softplus_threshold: 20.0
 
 optim:

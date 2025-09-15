@@ -63,7 +63,6 @@ def _load_epochs(npz_path: str):
     d = np.load(npz_path, allow_pickle=True)
     x = d.get("epoch_idx", d.get("epoch", None))
     if x is None:
-        # fallback to length of val_acc
         v = d.get("val_acc_epoch_mean", d.get("val_acc_epoch"))
         x = np.arange(1, len(v) + 1)
     v = d.get("val_acc_epoch_mean", d.get("val_acc_epoch"))

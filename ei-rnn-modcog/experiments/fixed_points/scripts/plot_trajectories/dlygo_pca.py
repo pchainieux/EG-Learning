@@ -38,11 +38,9 @@ def build_task_datasets(task_names, batch_size, seq_len, data_cfg, device=None):
             out[t] = (tr, va, tr_env.action_space.n, tr_env.observation_space.shape[-1])
         return out
     
-    # Handle cached datasets (omitted for brevity)
     raise NotImplementedError("Use online data source for now")
 
 def extract_batch_data(ds):
-    """Extract X, Y from NeuroGym Dataset batch - handles multiple formats"""
     batch = ds()
     if hasattr(batch, 'inputs') and hasattr(batch, 'target'):
         return batch.inputs, batch.target
@@ -55,16 +53,13 @@ def extract_batch_data(ds):
 
 @torch.no_grad()
 def evaluate_with_activations(model, ds, device, mask_thresh, batches=20):
-    """Enhanced evaluation that collects full trial activations"""
     model.eval()
     crit = ModCogLossCombined()
     
-    # Standard metrics
     tot_l = tot_fix = tot_dec = 0.0
     acc_all = acc_dec = 0.0
     n_dec = 0
     
-    # Activation collection
     all_X, all_H, all_PRE, all_ACT, all_Y, all_labels = [], [], [], [], [], []
     
     for _ in range(batches):
@@ -78,10 +73,8 @@ def evaluate_with_activations(model, ds, device, mask_thresh, batches=20):
             
         dec_mask = decision_mask_from_inputs(X, thresh=mask_thresh)
         
-        # Forward pass with state collection
         logits, H, PRE, ACT, X_states = model.forward_with_states(X)
         
-        # Standard evaluation
         l, lf, ld = crit(logits, Y, dec_mask)
         tot_l += l.item(); tot_fix += lf.item(); tot_dec += ld.item()
         
@@ -91,14 +84,12 @@ def evaluate_with_activations(model, ds, device, mask_thresh, batches=20):
             acc_dec += a_dec
             n_dec += 1
         
-        # Store activations for analysis
         all_X.append(X.cpu().numpy())
         all_H.append(H.cpu().numpy())
         all_PRE.append(PRE.cpu().numpy())
         all_ACT.append(ACT.cpu().numpy())
         all_Y.append(logits.cpu().numpy())
         
-        # FIXED: Extract one label per trial (not per batch)
         batch_size = X.shape[0]
         for b in range(batch_size):
             decision_times = torch.where(dec_mask[b] > 0.5)[0]
@@ -110,10 +101,9 @@ def evaluate_with_activations(model, ds, device, mask_thresh, batches=20):
     
     model.train()
     
-    if not all_H:  # No successful batches
+    if not all_H: 
         return None, None
     
-    # Combine all data
     activations = {
         "X": np.concatenate(all_X, axis=0),
         "H": np.concatenate(all_H, axis=0), 
@@ -134,20 +124,16 @@ def evaluate_with_activations(model, ds, device, mask_thresh, batches=20):
     return metrics, activations
 
 def analyze_delay_dynamics(activations, timing_cfg, outdir, epoch=None):
-    """Perform PCA analysis on delay period hidden states"""
     H_arr = activations["H"]
     labels = activations["labels"]
     
-    # Extract timing information
     fix_steps = int(timing_cfg.get("fixation_steps", 5))
     stim_steps = int(timing_cfg.get("stimulus_steps", 5))
     delay_steps = int(timing_cfg.get("delay_steps", 10))
     
-    # Define delay period slice
     delay_start = fix_steps + stim_steps
     delay_end = delay_start + delay_steps
     
-    # Check if we have enough timesteps
     if delay_end > H_arr.shape[1]:
         print(f"Warning: Not enough timesteps for delay analysis. Have {H_arr.shape[1]}, need {delay_end}")
         delay_end = min(delay_end, H_arr.shape[1])
@@ -155,11 +141,9 @@ def analyze_delay_dynamics(activations, timing_cfg, outdir, epoch=None):
     
     delay_slice = slice(delay_start, delay_end)
     
-    # Extract delay period hidden states
-    H_delay = H_arr[:, delay_slice, :]  # (trials, delay_steps, hidden_dim)
+    H_delay = H_arr[:, delay_slice, :] 
     H_delay_flat = H_delay.reshape(-1, H_delay.shape[-1])
     
-    # FIXED: Ensure labels array matches the number of trials
     n_trials = H_arr.shape[0]
     if len(labels) != n_trials:
         print(f"Warning: labels size {len(labels)} doesn't match trials {n_trials}")
@@ -169,24 +153,20 @@ def analyze_delay_dynamics(activations, timing_cfg, outdir, epoch=None):
             labels = np.pad(labels, (0, n_trials - len(labels)), mode='constant', 
                           constant_values=labels[-1] if len(labels) > 0 else 0)
     
-    # Replicate labels for each delay timestep
     labels_delay = np.repeat(labels, delay_steps)
     
-    # FIXED: Double check sizes match before plotting
     if len(labels_delay) != H_delay_flat.shape[0]:
         print(f"ERROR: Size mismatch! labels_delay: {len(labels_delay)}, H_delay_flat: {H_delay_flat.shape[0]}")
         min_size = min(len(labels_delay), H_delay_flat.shape[0])
         labels_delay = labels_delay[:min_size]
         H_delay_flat = H_delay_flat[:min_size]
     
-    # PCA analysis
     pca = PCA(n_components=3, svd_solver="full")
     Z = pca.fit_transform(H_delay_flat)
     
     print(f"PCA shapes: Z={Z.shape}, labels_delay={labels_delay.shape}")
     print(f"PCA explained variance: {pca.explained_variance_ratio_[:3]}")
     
-    # Plot delay period PCA (this should show ring structure if learned)
     plt.figure(figsize=(8, 6))
     scatter = plt.scatter(Z[:, 0], Z[:, 1], c=labels_delay, s=4, cmap="hsv", alpha=0.7)
     plt.colorbar(scatter, label="Target Action")
@@ -198,12 +178,10 @@ def analyze_delay_dynamics(activations, timing_cfg, outdir, epoch=None):
     plt.title(title)
     plt.tight_layout()
     
-    # Save plot
     filename = f"pca_delay_epoch{epoch:03d}.png" if epoch else "pca_delay_final.png"
     plt.savefig(outdir / filename, dpi=200, bbox_inches='tight')
     plt.close()
     
-    # Plot trial trajectories
     pca_full = PCA(n_components=3).fit(H_arr.reshape(-1, H_arr.shape[-1]))
     plt.figure(figsize=(8, 6))
     
@@ -211,7 +189,6 @@ def analyze_delay_dynamics(activations, timing_cfg, outdir, epoch=None):
     for i in range(n_plot):
         Zi = pca_full.transform(H_arr[i])
         
-        # Color by epoch: fixation=gray, stimulus=green, delay=blue, decision=red
         plt.plot(Zi[:fix_steps, 0], Zi[:fix_steps, 1], alpha=0.3, color='gray', linewidth=0.5)
         plt.plot(Zi[fix_steps:fix_steps+stim_steps, 0], Zi[fix_steps:fix_steps+stim_steps, 1], 
                 alpha=0.6, color='green', linewidth=0.7)
@@ -231,7 +208,6 @@ def analyze_delay_dynamics(activations, timing_cfg, outdir, epoch=None):
     plt.savefig(outdir / filename, dpi=200, bbox_inches='tight')
     plt.close()
     
-    # Save numerical results
     filename = f"pca_data_epoch{epoch:03d}.npz" if epoch else "pca_data_final.npz"
     np.savez_compressed(outdir / filename,
                         Z_delay=Z, labels_delay=labels_delay,
@@ -247,7 +223,6 @@ def main():
     
     cfg = yaml.safe_load(open(args.config, "r"))
     
-    # Setup
     seed = int(cfg.get("seed", 7))
     set_seed_all(seed, deterministic=False)
     
@@ -258,27 +233,23 @@ def main():
     outdir = Path(cfg.get("outdir", "runs/exp"))
     outdir.mkdir(parents=True, exist_ok=True)
     
-    # Use real ModCog tasks
     tasks = cfg.get("tasks", ["dlygo"])
     if isinstance(tasks, str):
         tasks = [tasks]
     
     print(f"Training on ModCog tasks: {tasks}")
     
-    # Build datasets
     data_cfg = cfg.get("data", {})
     seq_len = int(data_cfg.get("seq_len", 400))
     batch_sz = int(data_cfg.get("batch_size", 64))
     
     dsets = build_task_datasets(tasks, batch_sz, seq_len, data_cfg, device=device.type)
     
-    # Model setup
     model_cfg = cfg.get("model", {})
     
-    # Get dimensions from the first task
     X0_np, _ = extract_batch_data(dsets[tasks[0]][0])
     input_dim = X0_np.shape[-1]
-    output_dim = dsets[tasks[0]][2]  # action_space.n
+    output_dim = dsets[tasks[0]][2]
     
     print(f"Task: {tasks[0]} | Input: {input_dim}, Output: {output_dim}")
     
@@ -286,7 +257,7 @@ def main():
         hidden_size=int(model_cfg.get("hidden_size", 256)),
         exc_frac=float(model_cfg.get("exc_frac", 0.8)),
         spectral_radius=float(model_cfg.get("spectral_radius", 1.2)),
-        input_scale=float(model_cfg.get("input_scale", 1.0)),  # FIXED: This was missing!
+        input_scale=float(model_cfg.get("input_scale", 1.0)),
         leak=float(model_cfg.get("leak", 0.2)),
         nonlinearity=model_cfg.get("nonlinearity", "softplus"),
         readout=model_cfg.get("readout", "e_only"),
@@ -296,7 +267,6 @@ def main():
     
     model = EIRNN(input_size=input_dim, output_size=output_dim, cfg=ei_cfg).to(device)
     
-    # Optimizer setup
     optim_cfg = cfg.get("optim", {})
     algo = optim_cfg.get("algorithm", "gd").lower()
     
@@ -317,7 +287,6 @@ def main():
     
     crit = ModCogLossCombined()
     
-    # Training loop
     train_cfg = cfg.get("train", {})
     epochs = int(train_cfg.get("num_epochs", 20))
     steps_per_epoch = int(train_cfg.get("steps_per_epoch", 300))
@@ -327,7 +296,6 @@ def main():
         model.train()
         epoch_loss = 0.0
         
-        # Training step (fixed batch extraction)
         for step in range(steps_per_epoch):
             train_ds = dsets[tasks[0]][0]
             
@@ -355,7 +323,6 @@ def main():
         
         print(f"Epoch {epoch:03d}: Loss {epoch_loss/steps_per_epoch:.4f}")
         
-        # Periodic evaluation with PCA analysis
         if epoch % eval_every == 0 or epoch == epochs:
             print(f"Analyzing dynamics at epoch {epoch}...")
             
@@ -368,18 +335,15 @@ def main():
                 metrics, activations = result
                 print(f"  Val Acc: {metrics['acc']:.3f}, Dec Acc: {metrics['acc_dec']:.3f}")
                 
-                # Save activations
                 np.savez_compressed(outdir / f"activations_epoch{epoch:03d}.npz", 
                                    **activations, epoch=epoch)
                 
-                # PCA analysis
                 explained_var = analyze_delay_dynamics(
                     activations, cfg.get("timing", {}), outdir, epoch
                 )
                 
                 print(f"  PCA explained variance: {explained_var[:3]}")
         
-        # Save checkpoint
         if epoch % 10 == 0 or epoch == epochs:
             torch.save({
                 'model_state_dict': model.state_dict(),

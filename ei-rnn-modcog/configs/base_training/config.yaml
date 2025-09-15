@@ -1,13 +1,12 @@
 seed: 1
 device: auto                  # 'auto', 'cpu', 'cuda'
-outdir: outputs/exp_singlehead_eg_test_no_leak/          # create new folder if I want to save a specific experiment results
-
+outdir: outputs/biological_constraints/   
 tasks: ["dm1"]                # e.g., ["dm1", "dms"]
 
 data:
-  source: cached             # "online", "cached"
-  batch_size: 256
-  seq_len: 350
+  source: online             # "online", "cached"
+  batch_size: 128
+  seq_len: 80
 
   cache:
     num_batches: 128
@@ -15,37 +14,44 @@ data:
     build_if_missing: true 
     seed: 7
     paths:                 
-      dm1: outputs/cache/dm1.npz
+      dm1: outputs/cache/dm1_fast.npz
 
 model:
   hidden_size: 256
   exc_frac: 0.8
-  spectral_radius: 1
+  spectral_radius: 1.2
   input_scale: 1.0
-  leak: 1               # (0,1]
+  leak: 1       
   nonlinearity: softplus  # softplus | tanh
-  readout: all        # e_only | all
+  readout: all            # e_only | all
+  softplus_beta: 10.0
+  softplus_threshold: 20.0
 
 optim:
-  algorithm: eg               # 'eg' (EG on W_hh + GD on others), 'gd' (GD everywhere)
+  algorithm: eg     
   eg:
-    lr: 0.1
+    lr: 0.2
     momentum: 0.0
     weight_decay: 1e-5
     min_magnitude: 1e-6
   gd:
-    lr: 0.05
+    lr: 0.1
     momentum: 0.9
     weight_decay: 1e-5
 
 train:
-  num_epochs: 5
-  steps_per_epoch: 500        # minibatches (online draw) per epoch
-  val_batches: 10             # per task validation batches at epoch end
+  num_epochs: 20  
+  steps_per_epoch: 500     
+  val_batches: 20  
   grad_clip: 1.0
   input_noise_std: 0.0
-  fixdown_weight: 1.0
-  spectral_renorm_every: 200
+  fixdown_weight: 0.5
+  spectral_renorm_every: 0
   mask_threshold: 0.5
   task_sampling: round_robin  # 'round_robin', 'random'
   task_weights: []            # used when task_sampling == 'random'; [] => uniform
+
+  row_sum_zero:
+    enabled: true    
+    weight: 0.5   
+    per_sign: true   

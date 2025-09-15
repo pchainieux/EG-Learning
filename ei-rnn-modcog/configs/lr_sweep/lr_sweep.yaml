@@ -62,6 +62,6 @@ sweep:
   plot:
     make_plots: true
     plot_plateau: true
-    target_lr:           # optional vertical markers; fill if you pick winners
+    target_lr:    
       eg:
       gd:

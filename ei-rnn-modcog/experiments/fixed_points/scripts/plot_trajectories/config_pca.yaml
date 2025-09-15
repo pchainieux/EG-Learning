@@ -1,6 +1,6 @@
 seed: 1
 device: auto
-outdir: outputs/last_stand/dlygo_test_4
+outdir: outputs/dlygo_test_2
 
 tasks: ["dlygo"]
 
@@ -15,15 +15,15 @@ model:
   spectral_radius: 1.0
   input_scale: 1.0         
   leak: 0.2 
-  nonlinearity: softplus
+  nonlinearity: tanh
   readout: all
   softplus_beta: 5.0
   softplus_threshold: 20.0
 
 optim:
-  algorithm: eg              # Change to "eg" for comparison
+  algorithm: gd   
   gd:
-    lr: 0.1
+    lr: 0.05
 
 train:
   num_epochs: 60

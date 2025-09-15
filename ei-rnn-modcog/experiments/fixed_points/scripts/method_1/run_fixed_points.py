@@ -1,4 +1,3 @@
-# experiments/fixed_points/scripts/run_fixed_points.py
 from __future__ import annotations
 
 import argparse
@@ -80,8 +79,7 @@ def build_argparser() -> argparse.ArgumentParser:
 
 def main():
     THIS_FILE = Path(__file__).resolve()
-    # repo structure: ei-rnn-modcog/experiments/fixed_points/scripts/this_file.py
-    REPO_ROOT = THIS_FILE.parents[3]  # -> ei-rnn-modcog
+    REPO_ROOT = THIS_FILE.parents[3]
     TRAINER_PY = REPO_ROOT / "base_scripts" / "train_singlehead_modcog.py"
 
     args = build_argparser().parse_args()
@@ -126,7 +124,6 @@ def main():
     print(f"[orchestrator] RUN_DIR={run_dir}")
     print(f"[orchestrator] CKPT_EXPECTED={ckpt}")
 
-    # Train if needed
     if not ckpt.exists():
         with tempfile.NamedTemporaryFile(prefix="fp_", suffix=".yaml",
                                          mode="w", encoding="utf-8", delete=False) as tmp:
@@ -141,7 +138,6 @@ def main():
         if res.returncode != 0:
             raise RuntimeError(f"Trainer failed with exit code {res.returncode}")
 
-    # Normalize checkpoint filename if trainer used a different name
     if not ckpt.exists():
         candidates = [
             run_dir / "checkpoint.pt",
@@ -167,7 +163,6 @@ def main():
                 "Verify the trainer saves to <outdir>/run/ckpt.pt or one of the common names."
             )
 
-    # Collect rollout seeds (once); then solve & optionally plot
     device = _device(cfg.get("device", "auto"))
     fp_cfg = cfg.get("fixed_points", {})
     eval_subdir = fp_cfg.get("eval", {}).get("outdir", "eval/fixed_points")
@@ -188,7 +183,6 @@ def main():
         np.savez_compressed(str(seeds_file), X=X_np, H0=H0_np)
         print(f"[orchestrator] wrote seeds → {seeds_file}")
 
-    # Solve
     res = subprocess.run(
         [sys.executable, "-u", "-m",
          "experiments.fixed_points.scripts.unified_fixed_points",
@@ -199,7 +193,6 @@ def main():
     if res.returncode != 0:
         raise RuntimeError(f"Analysis failed with exit code {res.returncode}")
 
-    # Plot
     if args.plot:
         res = subprocess.run(
             [sys.executable, "-u", "-m",

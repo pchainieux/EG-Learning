@@ -1,4 +1,3 @@
-# experiments/fixed_points/scripts/plot_fixed_points.py
 from __future__ import annotations
 
 import argparse
@@ -62,7 +61,6 @@ def plot_residuals(df: pd.DataFrame, out_png: Path):
 
 
 def plot_unit_proximity(eigvals_obj: np.ndarray, out_png: Path):
-    # eigvals is an object-array of 1D arrays; flatten magnitudes and plot |λ|-1
     mags = []
     for arr in eigvals_obj:
         if arr is None:

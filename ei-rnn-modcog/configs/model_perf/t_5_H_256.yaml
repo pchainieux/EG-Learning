@@ -1,6 +1,6 @@
 seed: 2
 device: auto                  # 'auto', 'cpu', 'cuda'
-outdir: outputs/final/model_perf_2/eg_t_5_H_256          # create new folder if I want to save a specific experiment results
+outdir: outputs/final/model_perf_2/eg_t_5_H_256   
 
 tasks: [dm1, dm2, dms, dnms, ctxdlydm1]                # e.g., ["dm1", "dms"]
 
@@ -22,14 +22,14 @@ model:
   exc_frac: 0.8
   spectral_radius: 1.2
   input_scale: 1.0
-  leak: 1               # (0,1]
+  leak: 1          
   nonlinearity: softplus  # softplus | tanh
-  readout: all        # e_only | all
+  readout: all            # e_only | all
   softplus_beta: 10.0
   softplus_threshold: 20.0
 
 optim:
-  algorithm: eg               # 'eg' (EG on W_hh + GD on others), 'gd' (GD everywhere)
+  algorithm: eg   
   eg:
     lr: 0.2
     momentum: 0.0
@@ -41,9 +41,9 @@ optim:
     weight_decay: 1e-5
 
 train:
-  num_epochs: 20               # set to 20 
-  steps_per_epoch: 500       #  minibatches (online draw) per epoch
-  val_batches: 20             # per task validation batches at epoch end
+  num_epochs: 20       
+  steps_per_epoch: 500   
+  val_batches: 20     
   grad_clip: 1.0
   input_noise_std: 0.0
   fixdown_weight: 0.5
@@ -53,6 +53,6 @@ train:
   task_weights: []            # used when task_sampling == 'random'; [] => uniform
 
   row_sum_zero:
-    enabled: false        # or false to turn off
-    weight: 0.05         # try 0.01–0.1; tune per your scale
-    per_sign: true       # penalize E and I row-sums separately
+    enabled: false    
+    weight: 0.05    
+    per_sign: true    

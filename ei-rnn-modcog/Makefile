@@ -4,9 +4,9 @@ export PYTHONPATH := $(PWD)
 PY ?= python -u
 PYTHON ?= $(PY)
 
-# =========================================================
-# EI GRADIENT EXPERIMENT (as before)
-# =========================================================
+# ================================
+# EI GRADIENT EXPERIMENT 
+# ================================
 
 CFG ?= configs/ei_gradient/credit.yaml
 
@@ -25,27 +25,22 @@ eigrad-all: eigrad-collect eigrad-metrics eigrad-plots
 
 
 # ================================
-# FIXED-POINTS PIPELINE (simple & robust)
+# FIXED-POINTS EXPERIMENT 
 # ================================
-# Base config for fixed-points runs
 FP_CFG        ?= configs/fixed_points/fixed_points.yaml
 
-# Where to store runs
 FP_RUN_ROOT   ?= outputs/fp_runs
 FP_EXP        ?= inh_sweep
 
-# Per-run controls
 NAME          ?= default
 OUTDIR        ?= $(FP_RUN_ROOT)/$(FP_EXP)/$(NAME)
 
-# Sweep controls
 INH           ?= 0.10 0.20 0.30
 SEED          ?= 1
 EPOCHS        ?= 5
 STEPS         ?= 200
-ONE_FP_SEED   ?= 1   # 1 → pass --one-fp-seed to orchestrator
+ONE_FP_SEED   ?= 1  
 
-# Aggregate CSV for a sweep
 SUMMARY_CSV   ?= $(FP_RUN_ROOT)/$(FP_EXP)/summary_all.csv
 
 .PHONY: help \
@@ -81,23 +76,16 @@ help:
 	@echo "  ONE_FP_SEED=$(ONE_FP_SEED)"
 	@echo "  SUMMARY_CSV=$(SUMMARY_CSV)"
 
-# ----------------
-# Single run flow
-# ----------------
-
-# End-to-end single run (train -> seeds+solve -> plots)
 fp-run:
 	@echo "[fp-run] OUTDIR=$(OUTDIR)"
 	@mkdir -p "$(OUTDIR)"
-	$(PYTHON) -m experiments.fixed_points.scripts.run_fixed_points \
+	$(PYTHON) -m experiments.fixed_points.scripts.method_1.run_fixed_points \
 		--config $(FP_CFG) \
 		--outdir "$(OUTDIR)" \
 		--plot
 
-# Alias
 fp-all: fp-run
 
-# Train only
 fp-train:
 	@echo "[fp-train] OUTDIR=$(OUTDIR)"
 	@mkdir -p "$(OUTDIR)"
@@ -105,31 +93,26 @@ fp-train:
 		--config $(FP_CFG) \
 		--outdir "$(OUTDIR)"
 
-# Rollout seeds (note: current orchestrator will also run solver)
 fp-rollout:
 	@echo "[fp-rollout] OUTDIR=$(OUTDIR)"
 	@mkdir -p "$(OUTDIR)"
-	$(PYTHON) -m experiments.fixed_points.scripts.run_fixed_points \
+	$(PYTHON) -m experiments.fixed_points.scripts.method_1.run_fixed_points \
 		--config $(FP_CFG) \
 		--outdir "$(OUTDIR)"
 
-# Solve-only (requires OUTDIR/run/ckpt.pt and rollout_seeds.npz)
 fp-solve:
 	@echo "[fp-solve] OUTDIR=$(OUTDIR)"
-	$(PYTHON) -m experiments.fixed_points.scripts.unified_fixed_points \
+	$(PYTHON) -m experiments.fixed_points.scripts.method_1.unified_fixed_points \
 		--run "$(OUTDIR)/run" \
 		--config $(FP_CFG)
 
-# Plot-only
 fp-plot:
 	@echo "[fp-plot] OUTDIR=$(OUTDIR)"
-	$(PYTHON) -m experiments.fixed_points.scripts.plot_fixed_points \
+	$(PYTHON) -m experiments.fixed_points.scripts.method_1.plot_fixed_points \
 		--run "$(OUTDIR)/run" \
 		--config $(FP_CFG)
 
-# ----------------
-# Simple sweep over inhibition fraction
-# ----------------
+
 fp-sweep:
 	@echo "[fp-sweep] EXP=$(FP_EXP)  ROOT=$(FP_RUN_ROOT)  INH=$(INH)"
 	@mkdir -p "$(FP_RUN_ROOT)/$(FP_EXP)"
@@ -139,7 +122,7 @@ fp-sweep:
 	  echo "[fp-sweep] inh=$$inh  outdir=$$outdir  seed=$(SEED) epochs=$(EPOCHS) steps=$(STEPS)"; \
 	  extra=""; \
 	  if [ "$(ONE_FP_SEED)" = "1" ]; then extra="--one-fp-seed"; fi; \
-	  $(PYTHON) -m experiments.fixed_points.scripts.run_fixed_points \
+	  $(PYTHON) -m experiments.fixed_points.scripts.method_1.run_fixed_points \
 	    --config $(FP_CFG) \
 	    --outdir "$$outdir" \
 	    --inh $$inh \
@@ -150,23 +133,21 @@ fp-sweep:
 	    --plot; \
 	done
 
-# Aggregate all per-run summaries under FP_RUN_ROOT/FP_EXP into one CSV
 fp-aggregate:
 	@echo "[fp-aggregate] writing $(SUMMARY_CSV)"
 	@mkdir -p "$(dir $(SUMMARY_CSV))"
-	$(PYTHON) -m experiments.fixed_points.scripts.aggregate \
+	$(PYTHON) -m experiments.fixed_points.scripts.method_1.aggregate \
 		--root "$(FP_RUN_ROOT)/$(FP_EXP)" \
 		--out  "$(SUMMARY_CSV)"
 
 .PHONY: fp-fig-ring
 fp-fig-ring:
-	$(PYTHON) -m experiments.fixed_points.scripts.plot_ring_panels \
+	$(PYTHON) -m experiments.fixed_points.scripts.method_1.plot_ring_panels \
 		--single-run $(OUTDIR)/run \
 		--readout-index 0 \
 		--traj-steps 60 --n-traj 24 \
 		--outfile $(OUTDIR)/run/eval/fixed_points/ring_panel.png
 		
-# Re-plot figures for all runs under FP_RUN_ROOT/FP_EXP
 fp-plots:
 	@echo "[fp-plots] scanning $(FP_RUN_ROOT)/$(FP_EXP)"
 	@set -euo pipefail; \
@@ -175,17 +156,15 @@ fp-plots:
 	for ck in $$hits; do \
 	  run=$$(dirname "$$ck"); \
 	  echo "[plot] $$run"; \
-	  $(PYTHON) -m experiments.fixed_points.scripts.plot_fixed_points \
+	  $(PYTHON) -m experiments.fixed_points.scripts.method_1.plot_fixed_points \
 	    --run "$$run" \
 	    --config $(FP_CFG); \
 	done
 
-# List runs discovered (by ckpt presence)
 fp-list:
 	@echo "[fp-list] runs under $(FP_RUN_ROOT)/$(FP_EXP):"
 	@find "$(FP_RUN_ROOT)/$(FP_EXP)" -type f -name ckpt.pt -printf '%h\n' 2>/dev/null | sort || true
 
-# Clean outputs for this experiment tag
 fp-clean:
 	@echo "[fp-clean] removing $(FP_RUN_ROOT)/$(FP_EXP)"
 	@rm -rf "$(FP_RUN_ROOT)/$(FP_EXP)"

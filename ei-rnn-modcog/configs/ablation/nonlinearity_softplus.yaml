@@ -1,6 +1,6 @@
 seed: 1
 device: auto                  # 'auto', 'cpu', 'cuda'
-outdir: outputs/ablation_gd_1/nonlinearity/softplus          # create new folder if I want to save a specific experiment results
+outdir: outputs/ablation_gd_1/nonlinearity/softplus    
 
 tasks: ["dm1"]                # e.g., ["dm1", "dms"]
 
@@ -22,14 +22,14 @@ model:
   exc_frac: 0.8
   spectral_radius: 1.2
   input_scale: 1.0
-  leak: 0.9               # (0,1]
+  leak: 0.9              
   nonlinearity: softplus  # softplus | tanh
-  readout: all        # e_only | all
+  readout: all            # e_only | all
   softplus_beta: 10.0
   softplus_threshold: 20.0
 
 optim:
-  algorithm: gd               # 'eg' (EG on W_hh + GD on others), 'gd' (GD everywhere)
+  algorithm: gd     
   eg:
     lr: 0.2
     momentum: 0.0
@@ -41,9 +41,9 @@ optim:
     weight_decay: 1e-5
 
 train:
-  num_epochs: 10               # set to 20 
-  steps_per_epoch: 250       #  minibatches (online draw) per epoch
-  val_batches: 20             # per task validation batches at epoch end
+  num_epochs: 10   
+  steps_per_epoch: 250  
+  val_batches: 20       
   grad_clip: 1.0
   input_noise_std: 0.0
   fixdown_weight: 0.5
@@ -53,6 +53,6 @@ train:
   task_weights: []            # used when task_sampling == 'random'; [] => uniform
 
   row_sum_zero:
-    enabled: true        # or false to turn off
-    weight: 0.5         # try 0.01–0.1; tune per your scale
-    per_sign: true       # penalize E and I row-sums separately
+    enabled: true 
+    weight: 0.5    
+    per_sign: true     

@@ -149,7 +149,7 @@ def run_once(cfg, device, dsets, algo, lr_value, seed):
 
     if algo == "eg":
         lr_eg = float(lr_value)
-        lr_gd = float(gd_cfg.get("lr", 0.05))  # for non-recurrent params
+        lr_gd = float(gd_cfg.get("lr", 0.05)) 
         mom_eg = float(eg_cfg.get("momentum", 0.0))
         wd_eg  = float(eg_cfg.get("weight_decay", 1e-5))
         minmag = float(eg_cfg.get("min_magnitude", 1e-6))
@@ -352,7 +352,6 @@ def main():
             plateau_epochs_seeds = []
             for seed in seeds:
                 if skip_existing and (algo, float(lr), int(seed)) in already_done:
-                    # pull existing result for plotting
                     rows_this = [er for er in existing_rows
                                  if er["algo"]==algo and float(er["lr"])==float(lr) and int(er["seed"])==int(seed)]
                     if rows_this:

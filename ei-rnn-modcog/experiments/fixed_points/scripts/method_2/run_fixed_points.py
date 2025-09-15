@@ -10,7 +10,7 @@ import yaml
 from neurogym import Dataset
 
 from experiments.fixed_points.src.model_io import rebuild_model_from_ckpt
-from experiments.fixed_points.scripts_2.unified_fixed_points import ( 
+from experiments.fixed_points.scripts.method_2.unified_fixed_points import ( 
         step_F, solve_one_fp, jacobian_at, classify_from_eigs
     )
 
@@ -232,10 +232,7 @@ def main():
     print(f"[run_fixed_points] wrote {len(H_star_list)} fixed points -> {eval_dir}")
 
     if args.plot:
-        try:
-            from plot_ring_panels import plot_ring_panel_for_run
-        except ModuleNotFoundError:
-            from experiments.fixed_points.scripts_2.plot_ring_panels import plot_ring_panel_for_run  # type: ignore
+        from experiments.fixed_points.scripts.method_2.plot_ring_panels import plot_ring_panel_for_run
         fig_path = eval_dir / "ring_panel.png"
         plot_ring_panel_for_run(run_dir, cfg, outfile=fig_path)
         print(f"[run_fixed_points] wrote figure -> {fig_path}")

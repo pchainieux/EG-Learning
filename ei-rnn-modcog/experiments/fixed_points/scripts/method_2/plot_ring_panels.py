@@ -8,7 +8,7 @@ import torch
 import matplotlib.pyplot as plt
 
 from experiments.fixed_points.src.model_io import rebuild_model_from_ckpt
-from experiments.fixed_points.scripts_2.unified_fixed_points import step_F 
+from experiments.fixed_points.scripts.method_2.unified_fixed_points import step_F 
 
 
 def _find_ckpt(run_dir: Path) -> Path:
