@@ -12,7 +12,7 @@ num_modes: 10
 out: null
 csv_out: null
 no_show: false
-plot_curves: both # Choice of eg, gd, both
+plot_curves: both    # Choice of eg, gd, both
 break_order: false
 mean: true
 num_runs: 200

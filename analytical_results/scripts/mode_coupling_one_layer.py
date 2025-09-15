@@ -115,7 +115,6 @@ def parse_args():
     ap = argparse.ArgumentParser(description="Mode coupling (one-layer).")
     ap.add_argument("--config", "--configs", dest="config", type=str, default=None,
                     help="Path to YAML config; CLI overrides YAML values.")
-    # Core knobs
     ap.add_argument("--algo", type=str, choices=["eg","gd"], default=None)
     ap.add_argument("--P", type=int, default=None)
     ap.add_argument("--N1", type=int, default=None)

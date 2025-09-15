@@ -293,7 +293,6 @@ def main():
         child_ss = ss.spawn(args.num_runs)
         run_seeds = [int(cs.generate_state(1)[0]) for cs in child_ss]
 
-        # init_kwargs may be dict or JSON; you already parsed it above as 'init_kwargs'
         def W_init_fn(run_idx: int):
             rseed = run_seeds[int(run_idx) % len(run_seeds)]
             W21_i, W32_i = build_init(args.init_name, Sigma_yx, args.N1, args.N2, args.N3,
